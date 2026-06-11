@@ -32,7 +32,9 @@ from collectors.zigbang import collect_zigbang_items, search_by_dong
 from analysis.statistics import (
     get_region_trade_summary, get_apt_detail, get_jeonse_rate_analysis,
     get_monthly_trend, get_area_distribution, get_hot_areas,
-    get_gap_analysis, print_summary
+    get_gap_analysis, print_summary,
+    get_pyoung_price, get_floor_premium, get_seasonal_pattern,
+    get_trade_gap_alert, get_quantile_picks, get_jeonse_momentum,
 )
 from analysis.indicators import (
     get_yield_analysis, get_price_volatility,
@@ -175,19 +177,57 @@ def cmd_analyze(args):
         else:
             print("❌ --apt 옵션으로 아파트명을 입력하세요")
 
+    elif args.type == 'pyoung' or args.type == '평당가':
+        df = get_pyoung_price(region)
+        print_summary(df, f"💰 {region or '전체'} 평당가 분석 (낮은 순)")
+
+    elif args.type == 'floor' or args.type == '층수':
+        df = get_floor_premium(region)
+        print_summary(df, f"🏢 {region or '전체'} 층수별 가격 프리미엄")
+        if df is not None and not df.empty and '고층_저층_프리미엄' in df.attrs:
+            print(f"  고층/저층 프리미엄: {df.attrs['고층_저층_프리미엄']:+.1f}%")
+
+    elif args.type == 'seasonal' or args.type == '계절':
+        df = get_seasonal_pattern(region)
+        print_summary(df, f"📅 {region or '전체'} 월별 계절성 분석")
+        if df is not None and not df.empty:
+            cheap = df.attrs.get('가장_싼_달')
+            pricey = df.attrs.get('가장_비싼_달')
+            peak = df.attrs.get('거래량_피크_달')
+            if cheap:
+                print(f"  가장 싼 달: {cheap}월 | 가장 비싼 달: {pricey}월 | 거래량 피크: {peak}월")
+
+    elif args.type == 'gap_alert' or args.type == '공백':
+        df = get_trade_gap_alert(args.months)
+        print_summary(df, f"⚠️  거래 공백 단지 (최근 {args.months * 30}일 이상 거래 없음)")
+
+    elif args.type == 'quantile' or args.type == '저평가':
+        if not region:
+            print("❌ --region 옵션으로 지역을 입력하세요")
+        else:
+            q = getattr(args, 'quantile', 0.25)
+            df = get_quantile_picks(region, q)
+            print_summary(df, f"📉 {region} 하위 {int(q*100)}% 저평가 단지")
+
+    elif args.type == 'momentum' or args.type == '모멘텀':
+        df = get_jeonse_momentum(region, args.months)
+        print_summary(df, f"📈 {region or '전체'} 전세가율 모멘텀 (최근 {args.months}개월)")
+
     elif args.type == 'all' or args.type == '전체':
         print(f"\n{'='*60}")
         print(f"  📋 {region or '전체'} 종합 분석")
         print(f"{'='*60}")
         cmd_analyze(argparse.Namespace(type='stats', region=region, months=args.months, trend=True))
-        cmd_analyze(argparse.Namespace(type='jeonse', region=region, months=args.months, trend=False, apt=None))
-        cmd_analyze(argparse.Namespace(type='hot', region=region, months=args.months, trend=False, apt=None))
+        cmd_analyze(argparse.Namespace(type='jeonse', region=region, months=args.months, trend=False, apt=None, quantile=0.25))
+        cmd_analyze(argparse.Namespace(type='hot', region=region, months=args.months, trend=False, apt=None, quantile=0.25))
 
     else:
         print(f"❌ 알 수 없는 분석 타입: {args.type}")
         print("   가능: stats(통계), jeonse(전세), area(면적), gap(갭),")
         print("         hot(핫플), yield(수익률), volatility(변동성),")
-        print("         reverse(역전세), detail(상세), all(전체)")
+        print("         reverse(역전세), detail(상세), all(전체),")
+        print("         pyoung(평당가), floor(층수), seasonal(계절),")
+        print("         gap_alert(공백), quantile(저평가), momentum(모멘텀)")
 
 
 def cmd_strategy(args):
@@ -373,13 +413,16 @@ def main():
     p_analyze.add_argument('type', choices=[
         'stats', 'jeonse', 'area', 'gap', 'hot', 'yield',
         'volatility', 'reverse', 'detail', 'all',
+        'pyoung', 'floor', 'seasonal', 'gap_alert', 'quantile', 'momentum',
         '통계', '전세', '면적', '갭', '핫플', '수익률',
-        '변동성', '역전세', '상세', '전체'
+        '변동성', '역전세', '상세', '전체',
+        '평당가', '층수', '계절', '공백', '저평가', '모멘텀',
     ])
     p_analyze.add_argument('--region', '-r', default='', help='지역명')
     p_analyze.add_argument('--months', '-m', type=int, default=6, help='분석 기간(월)')
     p_analyze.add_argument('--apt', default='', help='아파트명')
     p_analyze.add_argument('--trend', action='store_true', help='추이 표시')
+    p_analyze.add_argument('--quantile', type=float, default=0.25, help='분위수 (0.0~1.0, 기본 0.25)')
 
     # strategy
     p_strategy = sub.add_parser('strategy', aliases=['전략'], help='투자 전략')
