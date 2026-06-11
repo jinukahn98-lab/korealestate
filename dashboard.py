@@ -192,7 +192,7 @@ with tab2:
             'dong': '동', 'avg_price': '평균가(만원)', 'cnt': '거래건수', 'avg_area': '평균면적(m²)'
         }), use_container_width=True, hide_index=True,
             column_config={
-                "평균가(만원)": st.column_config.NumberComponent(format="%.0f"),
+                "평균가(만원)": st.column_config.NumberColumn(format="%.0f"),
             })
     else:
         st.info("데이터 없음")
@@ -206,7 +206,7 @@ with tab3:
             'apt_name': '아파트', 'dong': '동', 'cnt': '거래건수', 'avg_area': '면적(m²)'
         }).drop(columns=['avg_price']),
             use_container_width=True, hide_index=True,
-            column_config={"평균가(억)": st.column_config.NumberComponent(format="%.1f")})
+            column_config={"평균가(억)": st.column_config.NumberColumn(format="%.1f")})
     else:
         st.info("데이터 없음")
 
