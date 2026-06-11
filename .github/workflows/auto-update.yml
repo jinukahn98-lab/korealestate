@@ -1,0 +1,20 @@
+name: Auto DB Update
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download DB
+        run: |
+          curl -L -o realestate.db.gz https://github.com/jinukahn98-lab/korealestate/releases/download/v1.0/realestate.db.gz
+          gunzip -f realestate.db.gz
+      - name: Commit & Push
+        run: |
+          git config user.name 'auto-bot'
+          git config user.email 'auto-bot@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet || (git commit -m 'auto: update db' && git push)
