@@ -8,11 +8,32 @@ import pandas as pd
 import os
 import sys
 from datetime import datetime
-import base64
-from io import StringIO
+import urllib.request
+import gzip
+import shutil
 
 sys.path.insert(0, os.path.dirname(__file__))
 from data.database import DB_PATH
+
+# --- 부트스트랩: DB 자동 다운로드 ---
+DB_GZ_URL = "https://github.com/jinukahn98-lab/korealestate/releases/download/v1.0/realestate.db.gz"
+
+def ensure_db():
+    if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 1000:
+        return True
+    try:
+        with st.spinner("📦 DB 다운로드 중 (첫 실행, 1~2분 소요)..."):
+            urllib.request.urlretrieve(DB_GZ_URL, DB_PATH + ".gz")
+            with gzip.open(DB_PATH + ".gz", 'rb') as fi, open(DB_PATH, 'wb') as fo:
+                shutil.copyfileobj(fi, fo)
+            os.remove(DB_PATH + ".gz")
+        return True
+    except Exception as e:
+        st.warning(f"DB 다운로드 실패: {e}")
+        return False
+
+ensure_db()
+
 from data.legal_dong_codes import get_cities, get_districts, get_region_name
 from analysis.statistics import get_region_trade_summary, get_jeonse_rate_analysis, get_monthly_trend, get_gap_analysis
 from report.html_report import generate_html_report, CHART_DIR, REPORT_DIR
