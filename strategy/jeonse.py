@@ -131,6 +131,32 @@ def jeonse_to_monthly_ratio(region=None, months=6):
     return df
 
 
+def alert_reverse_jeonse(threshold=80, min_trades=3):
+    """역전세 위험 단지 탐색 + 텔레그램용 경보 메시지 생성"""
+    from analysis.indicators import get_reverse_jeonse_risk
+    from datetime import date
+
+    risk = get_reverse_jeonse_risk()
+    if risk is None or risk.empty:
+        return None
+
+    filtered = risk[
+        (risk['전세가율'] >= threshold) &
+        (risk['분석건수'] >= min_trades)
+    ]
+    if filtered.empty:
+        return None
+
+    lines = [f"🚨 역전세 경보 — {date.today().strftime('%Y-%m-%d')}", "━" * 20]
+    for _, row in filtered.iterrows():
+        gap_eok = row['갭'] / 10000
+        lines.append(
+            f"{row['apt_name']} ({row['region']}): "
+            f"전세가율 {row['전세가율']:.1f}% / 갭 {gap_eok:.1f}억"
+        )
+    return "\n".join(lines)
+
+
 def get_jeonse_strategy(region, deposit_budget=None):
     """종합 전세 전략 추천"""
     print(f"\n{'='*60}")

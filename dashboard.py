@@ -78,12 +78,9 @@ st.markdown("""
 @st.cache_data(ttl=300)
 def load_region_list():
     """지역 목록 로드"""
-    cities = ['서울특별시']  # 당장은 서울만
     districts = get_districts('서울특별시')
     regions = [f'서울특별시 {d["name"]}' for d in districts]
-    return ['서울특별시 강남구', '서울특별시 서초구', '서울특별시 송파구', '서울특별시 관악구',
-            '서울특별시 마포구', '서울특별시 용산구', '서울특별시 양천구',
-            '서울특별시 강동구', '서울특별시 노원구', '서울특별시 영등포구']
+    return sorted(regions)
 
 @st.cache_data(ttl=300)
 def get_stats(region, months=3):
