@@ -1,0 +1,13 @@
+# Streamlit Cloud 설정
+[runner]
+python = "3.11"
+
+[browsers]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1a73e8"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1a2e"
+textColor = "#ffffff"
+font = "sans serif"
