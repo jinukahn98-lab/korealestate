@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 부동산 리포트 자동 생성 + 텔레그램 전송 스크립트
-cron job에서 실행되어 결과를 텔레그램으로 푸시합니다.
+갭 투자 TOP, 역전세 경보, 예산 추천 포함 고도화 버전
 """
 import sys
 import os
@@ -10,83 +10,108 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from datetime import datetime
 from data.database import get_conn
-from report.report import generate_weekly_report, generate_monthly_report, generate_summary_report
+from report.report import generate_weekly_report, generate_summary_report
 from charts import generate_all_charts
 import pandas as pd
 
 
 def send_telegram(message, image_path=None):
     """결과를 텔레그램으로 전송"""
-    # 메시지와 이미지 경로를 stdout으로 출력
-    # cron job이 이 출력을 잡아서 텔레그램으로 전송
     print(f"MSG:{message}")
     if image_path and os.path.exists(image_path):
         print(f"MEDIA:{os.path.abspath(image_path)}")
 
 
 def daily_briefing():
-    """일일 브리핑 생성"""
+    """일일 브리핑 생성 (고도화)"""
     today = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     conn = get_conn()
-    regions = ['서울특별시 강남구', '서울특별시 서초구', '서울특별시 송파구']
+    regions = ['서울특별시 강남구', '서울특별시 서초구', '서울특별시 송파구',
+               '서울특별시 관악구', '서울특별시 마포구', '서울특별시 노원구']
 
     msg = f"🏠 **일일 부동산 브리핑** ({today})\n\n"
 
     for region in regions:
-        # 지역별 요약
         t = conn.execute("SELECT COUNT(*) FROM apt_trade WHERE region=? AND deal_date >= date('now', '-3 months')", (region,)).fetchone()[0]
         avg_p = conn.execute("SELECT ROUND(AVG(price)) FROM apt_trade WHERE region=? AND deal_date >= date('now', '-3 months')", (region,)).fetchone()[0]
         avg_a = conn.execute("SELECT ROUND(AVG(area),1) FROM apt_trade WHERE region=? AND deal_date >= date('now', '-3 months')", (region,)).fetchone()[0]
         r = conn.execute("SELECT COUNT(*) FROM apt_rent WHERE region=? AND deal_date >= date('now', '-3 months')", (region,)).fetchone()[0]
-
         name = region.replace('서울특별시 ', '')
-        msg += f"📍 **{name}**\n"
-        msg += f"   매매 {t}건 | 평균 {avg_p//10000:.1f}억 | {avg_a:.0f}m² | 전월세 {r}건\n\n"
+        msg += f"📍 **{name}**\n   매매 {t}건 | 평균 {avg_p//10000:.1f}억 | {avg_a:.0f}m² | 전월세 {r}건\n\n"
 
     conn.close()
 
-    # 차트 생성
-    chart_dir = os.path.join(os.path.dirname(__file__), '..', 'charts')
-    os.makedirs(chart_dir, exist_ok=True)
+    # 갭 투자 TOP 5
+    try:
+        from strategy.gap_scanner import scan_gap_opportunities
+        df = scan_gap_opportunities(min_rate=65, max_rate=85, max_gap=50000, min_trades=3)
+        if df is not None and not df.empty:
+            msg += f"💰 **갭 투자 HOT5**\n"
+            for _, r in df.head(5).iterrows():
+                region_short = r['region'].replace('서울특별시 ', '').replace('경기도 ', '')
+                msg += f"   {region_short} {r['apt_name']} | 전세가율 {r['jeonse_rate']:.1f}% | 갭 {r['gap']/10000:.1f}억\n"
+            msg += "\n"
+    except Exception as e:
+        msg += f"⚠️ 갭 분석 오류: {e}\n\n"
 
-    # 전체 요약 리포트
-    summary_output = []
-    import io
-    from contextlib import redirect_stdout
+    # 역전세 경보
+    try:
+        from strategy.jeonse import alert_reverse_jeonse
+        alert = alert_reverse_jeonse(threshold=85)
+        if alert:
+            lines = alert.strip().split('\n')
+            msg += f"{lines[0]}\n"
+            for l in lines[1:7]:  # TOP 5만
+                if l.strip():
+                    msg += f"   {l.strip()}\n"
+        else:
+            msg += f"✅ 역전세 위험 없음 (85%↑ 기준)\n"
+        msg += "\n"
+    except Exception as e:
+        msg += f"⚠️ 역전세 오류: {e}\n\n"
 
-    f = io.StringIO()
-    with redirect_stdout(f):
-        generate_summary_report()
-    summary_output = f.getvalue()
+    # 예산 기반 추천
+    try:
+        from strategy.region_planner import find_regions_by_budget
+        df5 = find_regions_by_budget(budget_ok=5)
+        if df5 is not None and not df5.empty:
+            msg += f"💡 **5억 예산 TOP 3**\n"
+            for _, r in df5.head(3).iterrows():
+                name = r['region'].replace('서울특별시 ', '')
+                msg += f"   {name}: 평균 {r['avg_price']/10000:.1f}억 / 전세가율 {r['jeonse_rate']:.1f}%\n"
+    except:
+        pass
 
-    msg += f"```\n{summary_output[:1000]}\n```"
     send_telegram(msg)
+
+    # 차트 생성 + 전송
+    try:
+        chart_dir = os.path.join(os.path.dirname(__file__), '..', 'charts')
+        for region in ['서울특별시 강남구', '서울특별시 서초구', '서울특별시 송파구']:
+            paths = generate_all_charts(region)
+            if paths:
+                for p in paths[:2]:
+                    send_telegram("", p)
+    except Exception as e:
+        send_telegram(f"⚠️ 차트 생성 오류: {e}")
 
 
 def weekly_report(region):
     """주간 리포트 생성 + 차트 전송"""
-    chart_dir = os.path.join(os.path.dirname(__file__), '..', 'charts')
-    os.makedirs(chart_dir, exist_ok=True)
-
     from contextlib import redirect_stdout
     import io
 
-    # 리포트 텍스트
     f = io.StringIO()
     with redirect_stdout(f):
         generate_weekly_report(region)
     report_text = f.getvalue()
 
-    # 차트 생성
     chart_paths = generate_all_charts(region)
 
-    # 텔레그램 전송
-    msg = f"📋 **주간 부동산 리포트**\n📍 {region}\n\n"
-    msg += f"```\n{report_text}\n```"
+    msg = f"📋 **주간 부동산 리포트**\n📍 {region}\n\n```\n{report_text}\n```"
     send_telegram(msg)
 
-    # 차트 전송
     for path in chart_paths:
         send_telegram("", path)
 

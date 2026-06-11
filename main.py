@@ -275,6 +275,35 @@ def cmd_status(args):
     print(f"{'='*60}")
 
 
+def cmd_alerts(args):
+    """조건 알림 관리"""
+    from scripts.alert_engine import register_condition, list_conditions, remove_condition, check_conditions
+    if args.action == "list":
+        rows = list_conditions(args.chat_id)
+        if rows:
+            for r in rows:
+                print(f"  #{r[0]} | {r[2]} | 지역:{r[4]} | 전세가율:{r[5]}~{r[6]} | 갭:{r[7]/10000:.0f}억 | 거래:{r[8]}건")
+        else:
+            print("📭 등록된 조건 없음")
+    elif args.action == "register":
+        cid = register_condition(args.chat_id, args.type, region=args.region,
+                                 min_rate=args.min_rate, max_rate=args.max_rate,
+                                 max_gap=args.max_gap*10000, min_trades=args.min_trades)
+        print(f"✅ 조건 등록 완료 (#{cid})")
+    elif args.action == "remove":
+        remove_condition(args.id)
+        print(f"✅ 조건 #{args.id} 삭제 완료")
+    elif args.action == "check":
+        results = check_conditions()
+        if results:
+            for chat_id, msg in results:
+                print(f"--- TO: {chat_id} ---")
+                print(msg)
+        else:
+            print("✅ 매칭된 조건 없음")
+
+
+
 def cmd_chart(args):
     """차트 생성"""
     from charts.chart_generator import generate_all_charts, chart_region_comparison
@@ -313,6 +342,18 @@ def main():
 
     # status
     p_status = sub.add_parser('status', help='시스템 상태')
+
+    # alerts
+    p_alerts = sub.add_parser('alerts', aliases=['알림'], help='조건 알림 관리')
+    p_alerts.add_argument('action', choices=['list', 'check', 'register', 'remove'])
+    p_alerts.add_argument('--chat-id', default='telegram', help='채팅 ID')
+    p_alerts.add_argument('--type', choices=['gap', 'jeonse_rate'], default='gap', help='알림 타입')
+    p_alerts.add_argument('--region', '-r', default='', help='지역 필터')
+    p_alerts.add_argument('--min-rate', type=float, default=65, help='최소 전세가율')
+    p_alerts.add_argument('--max-rate', type=float, default=85, help='최대 전세가율')
+    p_alerts.add_argument('--max-gap', type=float, default=3, help='최대 갭 (억원)')
+    p_alerts.add_argument('--min-trades', type=int, default=3, help='최소 거래건수')
+    p_alerts.add_argument('--id', type=int, default=0, help='조건 ID (remove용)')
 
     # collect
     p_collect = sub.add_parser('collect', aliases=['수집'], help='데이터 수집')
@@ -386,6 +427,8 @@ def main():
         '지역': cmd_region,
         'chart': cmd_chart,
         '차트': cmd_chart,
+        'alerts': cmd_alerts,
+        '알림': cmd_alerts,
     }
 
     if args.command in commands:
