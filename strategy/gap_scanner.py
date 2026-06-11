@@ -18,6 +18,7 @@ FROM apt_trade t
 JOIN apt_rent r ON t.apt_name = r.apt_name
     AND ABS(t.area - r.area) < 5
     AND t.region = r.region
+WHERE t.deal_date >= date("now", "-6 months") AND r.deal_date >= date("now", "-6 months")
 GROUP BY t.region, t.apt_name
 HAVING COUNT(*) > 2 AND AVG(t.price) > 0
 ORDER BY jeonse_rate DESC
@@ -114,6 +115,46 @@ def print_gap_table(min_rate=70, max_rate=80, max_gap=50000, min_trades=5):
         )
     print(sep)
     print(f"  총 {len(df)}개 단지\n")
+
+
+def score_gap_risk(df):
+    """갭 투자 리스크 스코어링 (낮을수록 안전)
+
+    점수 = 전세가율(40%) + 거래량 안정성(20%) + 가격 변동성(40%)
+    """
+    if df.empty:
+        return df
+
+    max_rate = df["jeonse_rate"].max()
+    min_rate = df["jeonse_rate"].min()
+    rate_range = max(max_rate - min_rate, 1)
+
+    max_gap = df["gap"].max()
+    min_gap = df["gap"].min()
+    gap_range = max(max_gap - min_gap, 1)
+
+    max_trades = df["trade_count"].max()
+    min_trades = df["trade_count"].min()
+    trade_range = max(max_trades - min_trades, 1)
+
+    df["risk_score"] = (
+        ((df["jeonse_rate"] - min_rate) / rate_range * 100) * 0.4 +
+        ((df["gap"] - min_gap) / gap_range * 100) * 0.2 +
+        ((1 - (df["trade_count"] - min_trades) / trade_range) * 100) * 0.4
+    ).round(1)
+
+    def risk_level(score):
+        if score <= 25:
+            return "safe"
+        elif score <= 50:
+            return "moderate"
+        elif score <= 75:
+            return "caution"
+        else:
+            return "danger"
+
+    df["risk_level"] = df["risk_score"].apply(risk_level)
+    return df.sort_values("risk_score")
 
 
 if __name__ == '__main__':

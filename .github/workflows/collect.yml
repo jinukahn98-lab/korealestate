@@ -1,0 +1,25 @@
+name: 부동산 데이터 수집
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install pandas requests python-dotenv
+      - name: Collect data
+        env:
+          MOLIT_API_KEY: ${{ secrets.MOLIT_API_KEY }}
+        run: python scripts/collect_all.py
+      - name: Upload DB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: korealestate_db
+          path: korealestate.db
+          compression-level: 9

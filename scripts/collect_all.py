@@ -10,9 +10,9 @@ import requests, time
 import pandas as pd
 from datetime import datetime
 
-KEY = 'e3d185a7422610ceceef0b20d8d1af717b7ecaad39c5a995ac037a935eef3cc3'
-TRADE_URL = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade'
-RENT_URL = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent'
+KEY = os.getenv("MOLIT_API_KEY", "")
+TRADE_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade'
+RENT_URL = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent'
 
 # 수집할 주요 지역 (서울/경기/부산 핵심 지역)
 TARGET_REGIONS = {

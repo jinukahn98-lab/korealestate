@@ -102,45 +102,49 @@ def fetch_trades(lawd_cd, deal_ymd, service_key=None, max_pages=5):
             '_type': 'json',
         }
 
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            if resp.status_code != 200:
-                print(f"  ⚠ HTTP 오류: {resp.status_code}")
-                break
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.get(url, params=params, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    header = data['response']['header']
 
-            data = resp.json()
-            header = data['response']['header']
+                    if header['resultCode'] != '00':
+                        print(f"  ⚠ API 오류: {header['resultMsg']}")
+                        break
 
-            if header['resultCode'] != '00':
-                print(f"  ⚠ API 오류: {header['resultMsg']}")
-                break
+                    body = data['response']['body']
+                    items = body.get('items', {}).get('item', [])
 
-            body = data['response']['body']
-            items = body.get('items', {}).get('item', [])
+                    if not items:
+                        if page == 1:
+                            print(f"  📭 {deal_ymd} {lawd_cd} 지역 거래 데이터 없음")
+                        break
 
-            if not items:
-                if page == 1:
-                    print(f"  📭 {deal_ymd} {lawd_cd} 지역 거래 데이터 없음")
-                break
+                    if isinstance(items, dict):
+                        items = [items]
 
-            if isinstance(items, dict):
-                items = [items]
+                    all_items.extend(items)
+                    total = body.get('totalCount', 0)
+                    print(f"  📄 페이지 {page}: {len(items)}건 (누적 {len(all_items)}건)")
 
-            all_items.extend(items)
-            total = body.get('totalCount', 0)
-            print(f"  📄 페이지 {page}: {len(items)}건 (누적 {len(all_items)}건)")
+                    if page * 100 >= total:
+                        break
 
-            if page * 100 >= total:
-                break
-
-            time.sleep(0.3)
-
-        except requests.exceptions.RequestException as e:
-            print(f"  ⚠ 네트워크 오류: {e}")
-            break
-        except Exception as e:
-            print(f"  ⚠ 파싱 오류: {e}")
-            break
+                    time.sleep(0.3)
+                    break  # success
+                elif attempt < max_retries:
+                    print(f"  ⚠ HTTP {resp.status_code}, 재시도 {attempt}/{max_retries - 1}...")
+                    time.sleep(2 * attempt)
+                else:
+                    print(f"  ❌ HTTP {resp.status_code}, 최대 재시도 초과")
+            except Exception as e:
+                if attempt < max_retries:
+                    print(f"  ⚠ {e}, 재시도 {attempt}/{max_retries - 1}...")
+                    time.sleep(2 * attempt)
+                else:
+                    print(f"  ❌ {e}, 최대 재시도 초과")
 
     if not all_items:
         return None
@@ -220,42 +224,49 @@ def fetch_rents(lawd_cd, deal_ymd, service_key=None, max_pages=5):
             '_type': 'json',
         }
 
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            if resp.status_code != 200:
-                print(f"  ⚠ HTTP 오류: {resp.status_code}")
-                break
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.get(url, params=params, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    header = data['response']['header']
 
-            data = resp.json()
-            header = data['response']['header']
+                    if header['resultCode'] != '00':
+                        print(f"  ⚠ API 오류: {header['resultMsg']}")
+                        break
 
-            if header['resultCode'] != '00':
-                print(f"  ⚠ API 오류: {header['resultMsg']}")
-                break
+                    body = data['response']['body']
+                    items = body.get('items', {}).get('item', [])
 
-            body = data['response']['body']
-            items = body.get('items', {}).get('item', [])
+                    if not items:
+                        if page == 1:
+                            print(f"  📭 {deal_ymd} {lawd_cd} 지역 전월세 데이터 없음")
+                        break
 
-            if not items:
-                if page == 1:
-                    print(f"  📭 {deal_ymd} {lawd_cd} 지역 전월세 데이터 없음")
-                break
+                    if isinstance(items, dict):
+                        items = [items]
 
-            if isinstance(items, dict):
-                items = [items]
+                    all_items.extend(items)
+                    total = body.get('totalCount', 0)
+                    print(f"  📄 페이지 {page}: {len(items)}건 (누적 {len(all_items)}건)")
 
-            all_items.extend(items)
-            total = body.get('totalCount', 0)
-            print(f"  📄 페이지 {page}: {len(items)}건 (누적 {len(all_items)}건)")
+                    if page * 100 >= total:
+                        break
 
-            if page * 100 >= total:
-                break
-
-            time.sleep(0.3)
-
-        except Exception as e:
-            print(f"  ⚠ 오류: {e}")
-            break
+                    time.sleep(0.3)
+                    break  # success
+                elif attempt < max_retries:
+                    print(f"  ⚠ HTTP {resp.status_code}, 재시도 {attempt}/{max_retries - 1}...")
+                    time.sleep(2 * attempt)
+                else:
+                    print(f"  ❌ HTTP {resp.status_code}, 최대 재시도 초과")
+            except Exception as e:
+                if attempt < max_retries:
+                    print(f"  ⚠ {e}, 재시도 {attempt}/{max_retries - 1}...")
+                    time.sleep(2 * attempt)
+                else:
+                    print(f"  ❌ {e}, 최대 재시도 초과")
 
     if not all_items:
         return None

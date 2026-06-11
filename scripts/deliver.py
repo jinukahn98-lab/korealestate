@@ -83,6 +83,52 @@ def daily_briefing():
     except:
         pass
 
+    # 매수/매도 타이밍 신호
+    try:
+        from strategy.timing import get_timing_signal
+        msg += "📊 **매수/매도 타이밍**\n"
+        for region in regions[:3]:
+            sig = get_timing_signal(region)
+            emoji = {"BUY": "🟢", "HOLD": "🟡", "SELL": "🔴"}
+            short = region.replace('서울특별시 ', '').replace('경기도 ', '')
+            msg += f"   {emoji.get(sig['signal'], '⚪')} {short}: {sig['signal']} ({sig['score']}점)\n"
+            for r in sig['reasons'][:2]:
+                msg += f"      └ {r}\n"
+        msg += "\n"
+    except Exception as e:
+        msg += f"⚠️ 타이밍 오류: {e}\n\n"
+
+    # 가격 예측
+    try:
+        from analysis.prediction import predict_region_price
+        msg += "🔮 **가격 예측 (3개월)**\n"
+        for region in regions[:3]:
+            pred = predict_region_price(region)
+            if "error" not in pred:
+                short = region.replace('서울특별시 ', '')
+                emoji = {"up": "📈", "down": "📉", "flat": "➡️"}
+                change = pred.get('predicted_3m_change_pct', 0)
+                msg += f"   {short}: 현재 {pred['latest_price']/10000:.1f}억 → {pred['predicted_price']/10000:.1f}억 ({change:+.1f}%)\n"
+        msg += "\n"
+    except Exception as e:
+        msg += f"⚠️ 예측 오류: {e}\n\n"
+
+    # 갭 리스크 스코어링 (안전한 갭투자)
+    try:
+        from strategy.gap_scanner import scan_gap_opportunities, score_gap_risk
+        df = scan_gap_opportunities(min_rate=65, max_rate=85, max_gap=50000, min_trades=3)
+        if df is not None and not df.empty:
+            df = score_gap_risk(df)
+            safe = df[df['risk_level'] == 'safe'].head(3)
+            if not safe.empty:
+                msg += "✅ **안전 갭투자 TOP 3** (리스크 최저)\n"
+                for _, r in safe.iterrows():
+                    short = r['region'].replace('서울특별시 ', '')
+                    msg += f"   {short} {r['apt_name']} | 갭 {r['gap']/10000:.1f}억 | 전세가율 {r['jeonse_rate']:.1f}%\n"
+                msg += "\n"
+    except Exception as e:
+        msg += f"⚠️ 리스크 오류: {e}\n\n"
+
     send_telegram(msg)
 
     # 차트 생성 + 전송

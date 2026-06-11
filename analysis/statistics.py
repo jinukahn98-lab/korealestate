@@ -191,7 +191,7 @@ def get_gap_analysis(region=None):
         params.append(f'%{region}%')
     query += ''' GROUP BY t.region, t.apt_name 
                  HAVING COUNT(*) > 2 AND 평균매매가 > 0
-                 ORDER BY 갑 ASC'''
+                 ORDER BY 갭 ASC'''
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
