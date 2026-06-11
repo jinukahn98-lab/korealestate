@@ -1,0 +1,13 @@
+default_region: '강남구'
+data_retention_months: 24
+
+zigbang:
+  geo_precision: 6
+
+analysis:
+  default_months: 6
+  min_trades: 3
+
+alert:
+  jeonse_rate_warning: 80
+  reverse_jeonse_check: true
