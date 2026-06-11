@@ -56,18 +56,18 @@ st.markdown("""
     h2 { font-size: 1.1rem !important; }
     h3 { font-size: 0.95rem !important; }
     .metric-card {
-        background: #1a1a2e;
+        background: #f0f2f6;
         border-radius: 10px;
         padding: 12px;
         margin-bottom: 8px;
-        border: 1px solid #2a2a3e;
+        border: 1px solid #e0e0e0;
     }
-    .metric-label { color: #888; font-size: 12px; }
-    .metric-value { color: #fff; font-size: 20px; font-weight: 700; }
-    .metric-sub { color: #4caf50; font-size: 12px; }
+    .metric-label { color: #666; font-size: 12px; }
+    .metric-value { color: #1a1a2e; font-size: 20px; font-weight: 700; }
+    .metric-sub { color: #0f7b3e; font-size: 12px; }
     .highlight-box {
-        background: #1e3a5f;
-        border-left: 3px solid #64b5f6;
+        background: #e8f0fe;
+        border-left: 3px solid #1a73e8;
         padding: 10px 14px;
         border-radius: 6px;
         margin: 8px 0;
