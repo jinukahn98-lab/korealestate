@@ -6,3 +6,4 @@ realestate.db
 .DS_Store
 charts/
 .hermes/
+*.sql
