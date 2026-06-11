@@ -13,11 +13,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MOLIT_BASE = "http://apis.data.go.kr/1613000/RTMSDataSvc"
+MOLIT_BASE = "https://apis.data.go.kr/1613000"
 
 SERVICE_KEYS = {
-    'trade': 'getRTMSDataSvcAptTrade',
-    'rent': 'getRTMSDataSvcAptRent',
+    'trade': 'RTMSDataSvcAptTrade',
+    'rent': 'RTMSDataSvcAptRent',
 }
 
 SALES_TYPE_NAMES = {

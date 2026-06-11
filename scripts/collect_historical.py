@@ -48,13 +48,9 @@ def collect_historical(data_type='trade'):
     return total
 
 if __name__ == '__main__':
+    from collectors.molit import SALES_TYPE_NAMES
     data_type = sys.argv[1] if len(sys.argv) > 1 else 'trade'
     print(f'📡 역대 {SALES_TYPE_NAMES.get(data_type, data_type)} 데이터 수집 시작...')
-    print(f'   대상: {len(TARGET_REGIONS)}개 지역, {len(list(YEAR_RANGE))}년 (2019~2023)')
+    print(f'   대상: {len(TARGET_REGIONS)}개 지역, 5년 (2019~2023)')
     total = collect_historical(data_type)
     print(f'\n✅ 완료! 총 {total}건 저장됨')
-    
-try:
-    from collectors.molit import SALES_TYPE_NAMES
-except:
-    pass
