@@ -324,9 +324,9 @@ sido = st.sidebar.selectbox("시/도", load_sido_list())
 regions = load_region_list_by_sido(sido)
 region = st.sidebar.selectbox("시/군/구", regions)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📊 개요", "📍 동별", "🏢 단지별", "🔵 전세", "📈 추이",
-    "💰 갭 투자", "💡 예산", "📊 고급 분석"
+    "💰 갭 투자", "💡 예산", "📊 고급 분석", "🏆 추천"
 ])
 
 s = get_stats(region)
@@ -585,5 +585,116 @@ with tab8:
             trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️"}
             cols[2].metric("전망", f"{trend_emoji.get(pred['trend'], '➡️')} {pred['predicted_3m_change_pct']:+.1f}%")
             st.caption(f"예측 정확도: {pred['accuracy_note']} | {pred['data_months']}개월 데이터 기반")
+
+# ===== TAB 9: 추천 엔진 =====
+with tab9:
+    st.subheader("🏆 매매 추천 엔진")
+    st.caption("8개 요소 종합 점수화 | ref: DB 최신 데이터 기준")
+
+    col_r1, col_r2, col_r3 = st.columns(3)
+    with col_r1:
+        st.metric("전세가율", "20%", "낮을수록 고득점")
+    with col_r2:
+        st.metric("가격추세", "20%", "안정적 상승 선호")
+    with col_r3:
+        st.metric("평당가매력", "10%", "시세 대비 저평가")
+
+    tab_r1, tab_r2, tab_r3, tab_r4 = st.tabs(["🏆 종합 순위", "🟢 매수 추천", "🔴 매도 경보", "📋 지역 분석"])
+
+    with tab_r1:
+        st.subheader("전체 지역 매매 추천 순위")
+        with st.spinner("순위 분석 중..."):
+            try:
+                from strategy.recommender import RecommendationEngine
+                engine = RecommendationEngine()
+                df_rank = engine.rank_regions(limit=30)
+                engine.close()
+                if not df_rank.empty:
+                    def color_grade(val):
+                        if "강력매수" in str(val):
+                            return "background-color: #ff4b4b20"
+                        elif "매수" in str(val):
+                            return "background-color: #00c85320"
+                        elif "관망" in str(val):
+                            return "background-color: #ffd60020"
+                        elif "매도" in str(val):
+                            return "background-color: #ff6d0020"
+                        return ""
+                    st.dataframe(df_rank.style.applymap(color_grade, subset=["등급"]),
+                                use_container_width=True, hide_index=True)
+                else:
+                    st.info("순위 데이터 없음")
+            except Exception as e:
+                st.error(f"순위 분석 오류: {e}")
+
+    with tab_r2:
+        st.subheader("🟢 지금 매수하기 좋은 지역")
+        with st.spinner("매수 추천 분석 중..."):
+            try:
+                from strategy.recommender import RecommendationEngine
+                engine = RecommendationEngine()
+                df_best = engine.find_best_deals(top_n=10)
+                engine.close()
+                if not df_best.empty:
+                    st.success(f"✅ 매수 추천 지역 {len(df_best)}곳 발견!")
+                    st.dataframe(df_best, use_container_width=True, hide_index=True)
+                else:
+                    st.info("현재 매수 추천 지역이 없습니다 (종합점수 60 미만)")
+            except Exception as e:
+                st.error(f"매수 추천 오류: {e}")
+
+    with tab_r3:
+        st.subheader("🔴 매도 고려 지역")
+        with st.spinner("매도 경보 분석 중..."):
+            try:
+                from strategy.recommender import RecommendationEngine
+                engine = RecommendationEngine()
+                df_sell = engine.find_sell_alerts(top_n=10)
+                engine.close()
+                if not df_sell.empty:
+                    st.warning(f"⚠️ 매도 고려 지역 {len(df_sell)}곳")
+                    st.dataframe(df_sell, use_container_width=True, hide_index=True)
+                else:
+                    st.info("매도 경보 지역 없음")
+            except Exception as e:
+                st.error(f"매도 경보 오류: {e}")
+
+    with tab_r4:
+        col_a, col_b = st.columns([1, 2])
+        with col_a:
+            target_region = st.selectbox("분석할 지역", regions, key="rec_region")
+        with col_b:
+            show_detail = st.button("🔍 분석", type="primary")
+
+        if show_detail or target_region:
+            with st.spinner("지역 분석 중..."):
+                try:
+                    from strategy.recommender import RecommendationEngine
+                    engine = RecommendationEngine()
+                    result = engine.score_region(target_region)
+                    engine.close()
+
+                    st.subheader(f"📍 {result['region']}")
+                    rcol1, rcol2, rcol3 = st.columns(3)
+                    rcol1.metric("종합점수", f"{result['total_score']}/100")
+                    rcol2.metric("등급", result['grade'])
+                    rcol3.metric("기준일", result['time'][:10])
+
+                    for name, data in result['factors'].items():
+                        bar = data['score'] / 10
+                        pct = data['score']
+                        if pct >= 70:
+                            color = "#00c853"
+                        elif pct >= 50:
+                            color = "#ffd600"
+                        else:
+                            color = "#ff4b4b"
+                        st.markdown(
+                            f"**{name}**: {data['score']}/100 ({data['value']})"
+                        )
+                        st.progress(data['score'] / 100)
+
+                except Exception as e:
+                    st.error(f"분석 오류: {e}")
 
 st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 데이터 출처: 국토교통부 실거래가 API")
