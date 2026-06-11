@@ -343,6 +343,46 @@ def cmd_alerts(args):
             print("✅ 매칭된 조건 없음")
 
 
+def cmd_recommend(args):
+    """매매 추천 엔진"""
+    from strategy.recommender import RecommendationEngine, print_ranking, print_recommendation, rank_by_budget
+
+    if args.action == 'rank':
+        print_ranking(limit=args.limit or 20)
+    elif args.action == 'region':
+        if args.region:
+            print_recommendation(args.region)
+        else:
+            print("❌ --region (-r) 옵션으로 지역을 입력하세요")
+    elif args.action == 'best':
+        engine = RecommendationEngine()
+        df = engine.find_best_deals(top_n=args.limit or 10)
+        engine.close()
+        print(f"\n{'='*70}")
+        print(f"🏆 TOP {args.limit or 10} 매수 추천 지역 ({datetime.now().strftime('%Y-%m-%d')})")
+        print(f"{'='*70}")
+        print(df.to_string(index=False))
+    elif args.action == 'sell':
+        engine = RecommendationEngine()
+        df = engine.find_sell_alerts(top_n=args.limit or 10)
+        engine.close()
+        print(f"\n{'='*70}")
+        print(f"🚨 매도 경보 지역 TOP {args.limit or 10}")
+        print(f"{'='*70}")
+        print(df.to_string(index=False))
+    elif args.action == 'budget' or args.action == '예산':
+        budget = args.budget or 5
+        df = rank_by_budget(budget_ok=budget)
+        if not df.empty:
+            print(f"\n{'='*80}")
+            print(f"💡 {budget}억 예산 매수 추천 순위")
+            print(f"{'='*80}")
+            print(df.to_string())
+        else:
+            print(f"📭 {budget}억 예산에 맞는 지역이 없습니다.")
+    else:
+        print(f"❌ 알 수 없는 액션: {args.action}")
+
 
 def cmd_chart(args):
     """차트 생성"""
@@ -453,6 +493,14 @@ def main():
     p_chart = sub.add_parser('chart', aliases=['차트'], help='차트 생성')
     p_chart.add_argument('--region', '-r', default='', help='지역명')
 
+    # recommend
+    p_recommend = sub.add_parser('recommend', aliases=['추천'], help='매매 추천 엔진')
+    p_recommend.add_argument('action', choices=['rank', 'region', 'best', 'sell', 'budget', '예산'],
+                            help='rank(순위) / region(지역분석) / best(매수추천) / sell(매도경보) / budget(예산별)')
+    p_recommend.add_argument('--region', '-r', default='', help='지역명 (region 액션용)')
+    p_recommend.add_argument('--budget', '-b', type=float, default=5, help='예산(억원, budget 액션용)')
+    p_recommend.add_argument('--limit', '-l', type=int, default=0, help='출력 개수')
+
     args = parser.parse_args()
 
     commands = {
@@ -472,6 +520,8 @@ def main():
         '차트': cmd_chart,
         'alerts': cmd_alerts,
         '알림': cmd_alerts,
+        'recommend': cmd_recommend,
+        '추천': cmd_recommend,
     }
 
     if args.command in commands:
