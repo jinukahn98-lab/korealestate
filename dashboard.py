@@ -589,15 +589,7 @@ with tab8:
 # ===== TAB 9: 추천 엔진 =====
 with tab9:
     st.subheader("🏆 매매 추천 엔진")
-    st.caption("8개 요소 종합 점수화 | ref: DB 최신 데이터 기준")
-
-    col_r1, col_r2, col_r3 = st.columns(3)
-    with col_r1:
-        st.metric("전세가율", "20%", "낮을수록 고득점")
-    with col_r2:
-        st.metric("가격추세", "20%", "안정적 상승 선호")
-    with col_r3:
-        st.metric("평당가매력", "10%", "시세 대비 저평가")
+    st.caption("8개 요소 종합 점수화 (전세가율/거래량/가격추세/갭/안정성/계절성/분산도/평당가)")
 
     tab_r1, tab_r2, tab_r3, tab_r4 = st.tabs(["🏆 종합 순위", "🟢 매수 추천", "🔴 매도 경보", "📋 지역 분석"])
 
@@ -610,18 +602,7 @@ with tab9:
                 df_rank = engine.rank_regions(limit=30)
                 engine.close()
                 if not df_rank.empty:
-                    def color_grade(val):
-                        if "강력매수" in str(val):
-                            return "background-color: #ff4b4b20"
-                        elif "매수" in str(val):
-                            return "background-color: #00c85320"
-                        elif "관망" in str(val):
-                            return "background-color: #ffd60020"
-                        elif "매도" in str(val):
-                            return "background-color: #ff6d0020"
-                        return ""
-                    st.dataframe(df_rank.style.applymap(color_grade, subset=["등급"]),
-                                use_container_width=True, hide_index=True)
+                    st.dataframe(df_rank, use_container_width=True, hide_index=True)
                 else:
                     st.info("순위 데이터 없음")
             except Exception as e:
@@ -681,18 +662,7 @@ with tab9:
                     rcol3.metric("기준일", result['time'][:10])
 
                     for name, data in result['factors'].items():
-                        bar = data['score'] / 10
-                        pct = data['score']
-                        if pct >= 70:
-                            color = "#00c853"
-                        elif pct >= 50:
-                            color = "#ffd600"
-                        else:
-                            color = "#ff4b4b"
-                        st.markdown(
-                            f"**{name}**: {data['score']}/100 ({data['value']})"
-                        )
-                        st.progress(data['score'] / 100)
+                        st.progress(data['score'] / 100, text=f"**{name}**: {data['score']}/100 ({data['value']})")
 
                 except Exception as e:
                     st.error(f"분석 오류: {e}")
