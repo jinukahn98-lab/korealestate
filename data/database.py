@@ -80,6 +80,51 @@ def init_db():
             collected_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT DEFAULT 'default',
+            apt_name TEXT NOT NULL,
+            region TEXT NOT NULL,
+            alert_on_price_change BOOLEAN DEFAULT 1,
+            alert_threshold_pct REAL DEFAULT 3.0,
+            last_score REAL,
+            last_price REAL,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(user_id, apt_name, region)
+        );
+
+        CREATE TABLE IF NOT EXISTS price_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            watchlist_id INTEGER,
+            alert_type TEXT,
+            old_value REAL,
+            new_value REAL,
+            message TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            notified BOOLEAN DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS kb_price (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            region TEXT,
+            apt_name TEXT,
+            price_type TEXT,
+            low_price REAL,
+            avg_price REAL,
+            high_price REAL,
+            collected_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS school_districts (
+            apt_name TEXT,
+            region TEXT,
+            elementary_school TEXT,
+            middle_school TEXT,
+            school_rating REAL,
+            distance_km REAL,
+            UNIQUE(apt_name, region)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_trade_date ON apt_trade(deal_date);
         CREATE INDEX IF NOT EXISTS idx_trade_region ON apt_trade(region);
         CREATE INDEX IF NOT EXISTS idx_trade_lawd ON apt_trade(lawd_cd);

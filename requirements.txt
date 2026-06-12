@@ -9,3 +9,7 @@ python-dotenv>=1.0
 openpyxl>=3.1
 tabulate>=0.9
 pyyaml>=6.0
+xgboost>=2.0
+scipy>=1.7
+beautifulsoup4>=4.12
+lxml>=5.1

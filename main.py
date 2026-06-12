@@ -380,8 +380,67 @@ def cmd_recommend(args):
             print(df.to_string())
         else:
             print(f"📭 {budget}억 예산에 맞는 지역이 없습니다.")
+    elif args.action == 'apt-recommend' or args.action == 'apt-search':
+        if args.action == 'apt-recommend':
+            cmd_recommend_apt(args)
+        else:
+            cmd_search_apt(args)
     else:
         print(f"❌ 알 수 없는 액션: {args.action}")
+
+
+def cmd_recommend_apt(args):
+    '''단지 단위 추천'''
+    region = args.region or '서울특별시 강남구'
+    from strategy.recommender import RecommendationEngine, print_apt_ranking
+    print_apt_ranking(region, limit=args.limit or 20)
+
+
+def cmd_search_apt(args):
+    '''단지 검색'''
+    from strategy.recommender import RecommendationEngine
+    engine = RecommendationEngine()
+    df = engine.search_apts(args.keyword)
+    for _, r in df.iterrows():
+        print(f'{r["apt_name"]} ({r["region"]}) - {r["cnt"]}건')
+    engine.close()
+
+
+def cmd_watchlist(args):
+    '''Watchlist 관리'''
+    from scripts.alert_engine import register_watchlist, remove_watchlist, list_watchlists, check_watchlist, get_price_alerts
+    if args.action == 'add':
+        register_watchlist('default', args.apt_name, args.region)
+        print(f'✅ {args.apt_name} 등록 완료')
+    elif args.action == 'remove':
+        remove_watchlist(args.id)
+    elif args.action == 'list':
+        items = list_watchlists()
+        for i in items:
+            print(f'{i["id"]}: {i["apt_name"]} ({i["region"]}) - 점수 {i["last_score"]}')
+    elif args.action == 'check':
+        alerts = check_watchlist()
+        for a in alerts:
+            print(a)
+    elif args.action == 'alerts':
+        alerts = get_price_alerts(limit=20)
+        for a in alerts:
+            print(f'{a["alert_type"]}: {a["message"]}')
+
+
+def cmd_portfolio(args):
+    '''포트폴리오 시뮬레이션'''
+    from strategy.portfolio import Portfolio
+    p = Portfolio(budget=args.budget or 5)
+    print(p.report())
+
+
+def cmd_backtest(args):
+    '''백테스트 실행'''
+    from strategy.backtest import backtest_strategy, print_backtest_result
+    result = backtest_strategy(args.region or '서울특별시 강남구',
+                                budget_ok=args.budget or 5)
+    print_backtest_result(result)
 
 
 def cmd_chart(args):
@@ -495,11 +554,30 @@ def main():
 
     # recommend
     p_recommend = sub.add_parser('recommend', aliases=['추천'], help='매매 추천 엔진')
-    p_recommend.add_argument('action', choices=['rank', 'region', 'best', 'sell', 'budget', '예산'],
-                            help='rank(순위) / region(지역분석) / best(매수추천) / sell(매도경보) / budget(예산별)')
-    p_recommend.add_argument('--region', '-r', default='', help='지역명 (region 액션용)')
+    p_recommend.add_argument('action', choices=['rank', 'region', 'best', 'sell', 'budget', '예산',
+                                                'apt-recommend', 'apt-search'],
+                            help='rank(순위) / region(지역분석) / best(매수추천) / sell(매도경보) / budget(예산별) / apt-recommend(단지추천) / apt-search(단지검색)')
+    p_recommend.add_argument('--region', '-r', default='', help='지역명 (region/apt-recommend 액션용)')
     p_recommend.add_argument('--budget', '-b', type=float, default=5, help='예산(억원, budget 액션용)')
     p_recommend.add_argument('--limit', '-l', type=int, default=0, help='출력 개수')
+    p_recommend.add_argument('--keyword', '-k', default='', help='검색어 (apt-search 액션용)')
+
+    # watchlist
+    p_watchlist = sub.add_parser('watchlist', aliases=['워치'], help='Watchlist 관리')
+    p_watchlist.add_argument('action', choices=['add', 'remove', 'list', 'check', 'alerts'],
+                            help='add(등록) / remove(삭제) / list(목록) / check(체크) / alerts(알림)')
+    p_watchlist.add_argument('--apt-name', default='', help='아파트명 (add 액션용)')
+    p_watchlist.add_argument('--region', '-r', default='', help='지역명')
+    p_watchlist.add_argument('--id', type=int, default=0, help='Watchlist ID (remove 액션용)')
+
+    # portfolio
+    p_portfolio = sub.add_parser('portfolio', aliases=['포트폴리오'], help='포트폴리오 시뮬레이션')
+    p_portfolio.add_argument('--budget', '-b', type=float, default=5, help='예산(억원)')
+
+    # backtest
+    p_backtest = sub.add_parser('backtest', aliases=['백테스트'], help='백테스트 실행')
+    p_backtest.add_argument('--region', '-r', default='', help='지역명')
+    p_backtest.add_argument('--budget', '-b', type=float, default=5, help='예산(억원)')
 
     args = parser.parse_args()
 
@@ -522,6 +600,12 @@ def main():
         '알림': cmd_alerts,
         'recommend': cmd_recommend,
         '추천': cmd_recommend,
+        'watchlist': cmd_watchlist,
+        '워치': cmd_watchlist,
+        'portfolio': cmd_portfolio,
+        '포트폴리오': cmd_portfolio,
+        'backtest': cmd_backtest,
+        '백테스트': cmd_backtest,
     }
 
     if args.command in commands:

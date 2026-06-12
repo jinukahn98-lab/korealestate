@@ -324,9 +324,10 @@ sido = st.sidebar.selectbox("시/도", load_sido_list())
 regions = load_region_list_by_sido(sido)
 region = st.sidebar.selectbox("시/군/구", regions)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "📊 개요", "📍 동별", "🏢 단지별", "🔵 전세", "📈 추이",
-    "💰 갭 투자", "💡 예산", "📊 고급 분석", "🏆 추천"
+    "💰 갭 투자", "💡 예산", "📊 고급 분석", "🏆 추천",
+    "🏢 단지 추천", "🔔 Watchlist", "📊 포트폴리오/백테스트"
 ])
 
 s = get_stats(region)
@@ -352,6 +353,16 @@ with tab1:
             titles = {'price_trend': '매매가 추이', 'jeonse_rate': '전세가율', 'gap': '갭 분석'}
             st.caption(titles.get(name, name))
             st.image(path, use_container_width=True)
+
+    with st.expander("📦 데이터 소스 현황 (Phase 5)", expanded=False):
+        st.markdown("""
+        - **매매 데이터**: 국토교통부 실거래가 API (apt_trade)
+        - **전세 데이터**: 국토교통부 전월세 API (apt_rent)
+        - **데이터 기간**: 2020년 ~ 현재
+        - **ML 모델 상태**: Mock (실제 XGBoost/LR 모델 프로토타입)
+        - **알림 엔진**: SQLite 기반 Watchlist (phase_2)
+        - **백테스트 엔진**: 월별 리밸런싱 시뮬레이터 (phase_4)
+        """)
 
 # ===== TAB 2: 동별 =====
 with tab2:
@@ -574,17 +585,44 @@ with tab8:
                 st.write(f"- {r}")
 
     with st.expander("가격 예측 (3개월)", expanded=False):
-        from analysis.prediction import predict_region_price
+        from analysis.prediction import predict_region_price, predict_apt_price_xgb
+
+        # Linear Regression 예측 (기존)
         pred = predict_region_price(region)
         if "error" in pred:
             st.info(pred["error"])
         else:
+            st.subheader("📈 선형 회귀 예측 (지역)")
             cols = st.columns(3)
             cols[0].metric("현재가", f"{pred['latest_price']/10000:.1f}억")
             cols[1].metric("3개월후 예측", f"{pred['predicted_price']/10000:.1f}억")
             trend_emoji = {"up": "📈", "down": "📉", "flat": "➡️"}
             cols[2].metric("전망", f"{trend_emoji.get(pred['trend'], '➡️')} {pred['predicted_3m_change_pct']:+.1f}%")
             st.caption(f"예측 정확도: {pred['accuracy_note']} | {pred['data_months']}개월 데이터 기반")
+
+        # XGBoost 예측 (Phase 3)
+        st.subheader("🤖 XGBoost 예측 (단지별)")
+        try:
+            from strategy.recommender import RecommendationEngine
+            engine = RecommendationEngine()
+            apts = engine.list_apts(region, min_trades=3)
+            engine.close()
+            if apts:
+                top_apt = apts[0]
+                xgb_pred = predict_apt_price_xgb(top_apt, region)
+                if "error" in xgb_pred:
+                    st.info(f"XGBoost: {xgb_pred['error']}")
+                else:
+                    cols = st.columns(4)
+                    cols[0].metric("단지", f"{top_apt}")
+                    cols[1].metric("현재가", f"{xgb_pred['current_price']/10000:.1f}억")
+                    cols[2].metric("3개월후", f"{xgb_pred['predicted_price']/10000:.1f}억")
+                    cols[3].metric("변화율", f"{xgb_pred.get('predicted_3m_change_pct', 0):+.1f}%")
+                    st.caption(f"모델: {xgb_pred.get('model_used', 'XGBoost')} | {xgb_pred.get('cv_note', '')} | In-Sample MAPE: {xgb_pred.get('in_sample_mape_pct', 'N/A')}%")
+            else:
+                st.info("분석 가능한 단지가 없습니다")
+        except Exception as e:
+            st.info(f"XGBoost 예측 생략: {e}")
 
 # ===== TAB 9: 추천 엔진 =====
 with tab9:
@@ -666,5 +704,254 @@ with tab9:
 
                 except Exception as e:
                     st.error(f"분석 오류: {e}")
+
+# ===== TAB 10: 단지 추천 (Phase 1) =====
+with tab10:
+    st.subheader("🏢 단지 추천 (Phase 1)")
+    st.caption("8개 요소 종합 점수화로 단지별 매매 추천 순위 제공")
+
+    try:
+        from strategy.recommender import RecommendationEngine
+        engine = RecommendationEngine()
+
+        col_a10, col_b10 = st.columns([1, 1])
+        with col_a10:
+            apt_region = st.selectbox("📍 지역 선택", regions, key="apt_rec_region")
+        with col_b10:
+            apt_search = st.text_input("🔍 단지 검색", placeholder="단지명 입력 (예: 래미안...)")
+
+        if apt_search:
+            results = engine.search_apts(apt_search, limit=20)
+            if not results.empty:
+                st.success(f"🔍 '{apt_search}' 검색 결과 {len(results)}건")
+                st.dataframe(results.rename(columns={
+                    'apt_name': '단지명', 'region': '지역', 'cnt': '거래건수'
+                }), use_container_width=True, hide_index=True)
+            else:
+                st.info(f"'{apt_search}' 검색 결과 없음")
+
+        st.subheader(f"🏆 {apt_region} 단지 순위표")
+        with st.spinner("단지 점수 분석 중..."):
+            df_apt_rank = engine.rank_apts(apt_region, limit=20, min_trades=3)
+            if not df_apt_rank.empty:
+                st.dataframe(df_apt_rank, use_container_width=True, hide_index=True)
+
+                st.subheader("단지별 상세 점수")
+                apt_names = df_apt_rank['단지명'].tolist()
+                selected_apt = st.selectbox("단지 선택", apt_names, key="apt_detail_select")
+                if selected_apt:
+                    with st.spinner(f"'{selected_apt}' 상세 분석 중..."):
+                        detail = engine.score_apt(selected_apt, apt_region)
+                        st.markdown(f"### 📋 {detail['apt_name']} ({detail['region']})")
+                        r1, r2, r3 = st.columns(3)
+                        r1.metric("종합점수", f"{detail['total_score']}/100")
+                        r2.metric("등급", detail['grade'])
+                        r3.metric("기준일", detail['time'][:10])
+                        for name, data in detail['factors'].items():
+                            st.progress(data['score'] / 100,
+                                        text=f"**{name}**: {data['score']}/100 ({data['value']})")
+            else:
+                st.info("분석 가능한 단지가 없습니다 (최소 3건 이상 거래 필요)")
+        engine.close()
+    except Exception as e:
+        st.error(f"단지 추천 오류: {e}")
+
+# ===== TAB 11: Watchlist (Phase 2) =====
+with tab11:
+    st.subheader("🔔 관심 단지 Watchlist (Phase 2)")
+    st.caption("관심 단지를 등록하고 점수/가격 변동 알림을 받으세요")
+
+    try:
+        from scripts.alert_engine import register_watchlist, remove_watchlist, list_watchlists, get_price_alerts
+
+        tab_w1, tab_w2 = st.tabs(["📝 등록/목록", "🔔 최근 알림"])
+
+        with tab_w1:
+            with st.form("watchlist_form"):
+                col_w1, col_w2, col_w3 = st.columns([2, 2, 1])
+                with col_w1:
+                    w_apt = st.text_input("단지명", placeholder="예: 래미안퍼스티지")
+                with col_w2:
+                    w_region = st.selectbox("지역", regions, key="wl_region")
+                with col_w3:
+                    w_threshold = st.slider("알림 임계값(%)", 1, 20, 3, key="wl_threshold")
+                submitted = st.form_submit_button("➕ 관심 단지 등록", type="primary")
+                if submitted and w_apt:
+                    ok = register_watchlist('default', w_apt, w_region,
+                                             alert_threshold_pct=w_threshold)
+                    if ok:
+                        st.success(f"✅ '{w_apt}' 등록 완료!")
+                        st.rerun()
+                    else:
+                        st.info(f"'{w_apt}' 은(는) 이미 등록되어 있습니다")
+                elif submitted and not w_apt:
+                    st.warning("단지명을 입력하세요")
+
+            st.divider()
+            st.subheader("📋 내 관심 단지 목록")
+            items = list_watchlists('default')
+            if items:
+                df_wl = pd.DataFrame([{
+                    'ID': item['id'],
+                    '단지명': item['apt_name'],
+                    '지역': item['region'],
+                    '최근점수': f"{item['last_score']:.1f}" if item['last_score'] else '-',
+                    '최근가격(억)': f"{item['last_price']/10000:.1f}" if item['last_price'] else '-',
+                    '임계값': f"{item['alert_threshold_pct']}%",
+                    '등록일': item['created_at'],
+                } for item in items])
+                st.dataframe(df_wl, use_container_width=True, hide_index=True)
+
+                st.subheader("🗑️ 관심 단지 삭제")
+                del_id = st.number_input("삭제할 ID", min_value=1, step=1, key="wl_del")
+                if st.button("삭제", type="secondary"):
+                    if remove_watchlist(del_id, 'default'):
+                        st.success(f"✅ ID {del_id} 삭제 완료")
+                        st.rerun()
+                    else:
+                        st.error(f"ID {del_id}를 찾을 수 없습니다")
+            else:
+                st.info("등록된 관심 단지가 없습니다. 위 폼에서 등록하세요.")
+
+        with tab_w2:
+            st.subheader("🔔 최근 알림 내역")
+            alerts = get_price_alerts('default', limit=30)
+            if alerts:
+                df_al = pd.DataFrame([{
+                    '시간': a['created_at'],
+                    '단지명': a['apt_name'],
+                    '지역': a['region'],
+                    '유형': a['alert_type'],
+                    '메시지': a['message'],
+                } for a in alerts])
+                st.dataframe(df_al, use_container_width=True, hide_index=True)
+            else:
+                st.info("최근 알림이 없습니다. Watchlist를 등록하고 변동이 발생하면 여기에 표시됩니다.")
+    except Exception as e:
+        st.error(f"Watchlist 오류: {e}")
+
+# ===== TAB 12: 포트폴리오/백테스트 (Phase 4) =====
+with tab12:
+    st.subheader("📊 포트폴리오 & 백테스트 (Phase 4)")
+    st.caption("RecommendationEngine 기반 월별 리밸런싱 백테스트 시뮬레이션")
+
+    try:
+        from strategy.backtest import backtest_strategy
+
+        col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
+        with col_bt1:
+            bt_region = st.selectbox("📍 백테스트 지역", regions, key="bt_region")
+        with col_bt2:
+            bt_budget = st.number_input("💰 초기 예산 (억)", 1, 50, 5, key="bt_budget")
+        with col_bt3:
+            bt_buy = st.slider("🟢 매수 기준점수", 40, 90, 65, key="bt_buy")
+        with col_bt4:
+            bt_sell = st.slider("🔴 매도 기준점수", 20, 60, 40, key="bt_sell")
+
+        if st.button("🚀 백테스트 실행", type="primary", use_container_width=True):
+            with st.spinner(f"'{bt_region}' 백테스트 분석 중... (최대 1분 소요)"):
+                try:
+                    result = backtest_strategy(
+                        region=bt_region,
+                        start_date='2020-01-01',
+                        end_date='2025-05-31',
+                        budget_ok=bt_budget,
+                        buy_threshold=bt_buy,
+                        sell_threshold=bt_sell,
+                        max_holdings=5,
+                        verbose=False,
+                    )
+
+                    if result.get('status') == 'error':
+                        st.error(result['message'])
+                    else:
+                        st.success(f"✅ 백테스트 완료! ({result['region']})")
+
+                        # 성과 지표 카드
+                        k1, k2, k3, k4, k5 = st.columns(5)
+                        k1.metric("초기 예산", f"{result['initial_value_ok']}억")
+                        k2.metric("최종 가치", f"{result['final_value_ok']}억")
+                        k3.metric("총 수익률", f"{result['total_return_pct']:+.2f}%",
+                                   delta=f"{result['cagr_pct']:+.2f}% CAGR")
+                        k4.metric("MDD", f"{result['max_drawdown_pct']:.1f}%")
+                        k5.metric("승률", f"{result['win_rate_pct']:.1f}%")
+
+                        k6, k7, k8 = st.columns(3)
+                        k6.metric("매수 횟수", f"{result['total_buys']}회")
+                        k7.metric("매도 횟수", f"{result['total_sells']}회")
+                        k8.metric("최종 보유", f"{result['num_holdings']}개")
+
+                        # 포트폴리오 가치 추이 차트
+                        mv = result.get('monthly_values', [])
+                        if mv:
+                            df_mv = pd.DataFrame(mv)
+                            fig_bt = go.Figure()
+                            fig_bt.add_trace(go.Scatter(
+                                x=df_mv['month'], y=df_mv['total_value_ok'],
+                                mode='lines+markers',
+                                name='포트폴리오 가치',
+                                line=dict(color='#2E86AB', width=2),
+                                fill='tozeroy', fillcolor='rgba(46, 134, 171, 0.15)',
+                            ))
+                            fig_bt.add_trace(go.Scatter(
+                                x=df_mv['month'], y=df_mv['cash_ok'],
+                                mode='lines',
+                                name='가용 현금',
+                                line=dict(color='#A0C4FF', width=1, dash='dash'),
+                            ))
+                            fig_bt.update_layout(
+                                title=f"📈 포트폴리오 가치 추이 ({result['region']})",
+                                xaxis_title="월",
+                                yaxis_title="가치 (억원)",
+                                template="plotly_white",
+                                height=400,
+                                hovermode='x unified',
+                            )
+                            st.plotly_chart(fig_bt, use_container_width=True)
+
+                        # 보유 단지 상세
+                        if result.get('holdings'):
+                            st.subheader("📋 최종 보유 단지")
+                            df_hold = pd.DataFrame(result['holdings'])
+                            st.dataframe(df_hold, use_container_width=True, hide_index=True)
+
+                        # 거래 내역
+                        if result.get('trade_log'):
+                            st.subheader("📜 거래 내역")
+                            df_trades = pd.DataFrame(result['trade_log'])
+                            st.dataframe(df_trades, use_container_width=True, hide_index=True)
+
+                except Exception as e:
+                    st.error(f"백테스트 실행 오류: {e}")
+
+        # 사전 설정 안내
+        with st.expander("📖 백테스트 설정 안내", expanded=False):
+            st.markdown("""
+            **백테스트 알고리즘**
+            - **매수**: 종합점수 ≥ 매수 기준점수인 단지를 예산 내에서 매수
+            - **매도**: 보유 단지 중 종합점수 < 매도 기준점수면 매도
+            - **리밸런싱**: 매월 1회 점수 재평가 후 포트폴리오 조정
+            - **최대 보유**: 최대 5개 단지 동시 보유
+
+            **성과 지표**
+            - **CAGR**: 연환산 수익률 (기하 평균)
+            - **MDD**: 최대 낙폭 (peak-to-trough)
+            - **승률**: 매도 건 중 수익이 난 비율
+            """)
+
+        # 포트폴리오 상태
+        st.divider()
+        st.subheader("💰 포트폴리오 상태")
+        col_ps1, col_ps2, col_ps3 = st.columns(3)
+        with col_ps1:
+            st.metric("초기 예산", f"{bt_budget}억")
+        with col_ps2:
+            st.metric("현금", f"{bt_budget}억 (미실행)")
+        with col_ps3:
+            st.metric("보유 단지", "0개 (백테스트 후 갱신)")
+        st.info("💡 위 '백테스트 실행' 버튼을 눌러 시뮬레이션을 시작하세요")
+
+    except Exception as e:
+        st.error(f"포트폴리오/백테스트 오류: {e}")
 
 st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 데이터 출처: 국토교통부 실거래가 API")
