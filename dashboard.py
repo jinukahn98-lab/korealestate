@@ -8,7 +8,6 @@ import pandas as pd
 import os
 import sys
 from datetime import datetime
-import urllib.request
 import gzip
 import shutil
 import plotly.graph_objects as go
@@ -24,8 +23,20 @@ def ensure_db():
     if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 1000:
         return True
     try:
+        import requests
         with st.spinner("📦 DB 다운로드 중 (첫 실행, 1~2분 소요)..."):
-            urllib.request.urlretrieve(DB_GZ_URL, DB_PATH + ".gz")
+            resp = requests.get(DB_GZ_URL, stream=True)
+            resp.raise_for_status()
+            total = int(resp.headers.get('content-length', 0))
+            progress_bar = st.progress(0, text="다운로드 중...")
+            downloaded = 0
+            with open(DB_PATH + ".gz", 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        progress_bar.progress(min(downloaded / total, 1.0))
+            progress_bar.empty()
             with gzip.open(DB_PATH + ".gz", 'rb') as fi, open(DB_PATH, 'wb') as fo:
                 shutil.copyfileobj(fi, fo)
             os.remove(DB_PATH + ".gz")
@@ -36,23 +47,42 @@ def ensure_db():
 
 ensure_db()
 
-from data.legal_dong_codes import get_cities, get_districts, get_region_name
-try:
-    from analysis.statistics import (
-        get_region_trade_summary, get_jeonse_rate_analysis, get_monthly_trend, get_gap_analysis,
-        get_pyoung_price, get_seasonal_pattern, get_trade_gap_alert, get_jeonse_momentum,
-    )
-except ImportError as e:
-    st.error(f"statistics import 실패: {e}")
-    st.stop()
+# --- Lazy import helpers ---
+def _import_stats():
+    from analysis.statistics import get_region_trade_summary, get_jeonse_rate_analysis, get_monthly_trend, get_gap_analysis, get_pyoung_price, get_seasonal_pattern, get_trade_gap_alert, get_jeonse_momentum
+    return locals()
 
-try:
-    from report.html_report import generate_html_report, CHART_DIR, REPORT_DIR
-    from strategy.gap_scanner import scan_gap_opportunities
-    from strategy.region_planner import find_regions_by_budget
-except ImportError as e:
-    st.error(f"기타 import 실패: {e}")
-    st.stop()
+def _import_recommender():
+    from strategy.recommender import RecommendationEngine
+    return RecommendationEngine
+
+def _import_alerts():
+    from scripts.alert_engine import register_watchlist, remove_watchlist, list_watchlists, check_watchlist, get_price_alerts
+    return locals()
+
+def _import_backtest():
+    from strategy.backtest import backtest_strategy
+    return backtest_strategy
+
+# --- Cached DB query helpers ---
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_query(query, params=None):
+    from data.database import get_conn
+    conn = get_conn()
+    try:
+        return pd.read_sql_query(query, conn, params=params or [])
+    finally:
+        conn.close()
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_trade_summary(region):
+    s = _import_stats()
+    from data.database import get_conn
+    conn = get_conn()
+    try:
+        return s['get_region_trade_summary'](region, conn)
+    finally:
+        conn.close()
 
 st.set_page_config(
     page_title="부동산 전략 시스템",
@@ -233,6 +263,7 @@ def load_region_list_by_sido(sido=None):
 
 
 def _fallback_seoul_regions():
+    from data.legal_dong_codes import get_districts
     districts = get_districts('서울특별시')
     return sorted([f'서울특별시 {d["name"]}' for d in districts])
 
@@ -288,16 +319,19 @@ def get_apt_price_history(region, apt_name):
 
 @st.cache_data(ttl=300)
 def get_trend(region):
-    return get_monthly_trend(region, 12)
+    s = _import_stats()
+    return s['get_monthly_trend'](region, 12)
 
 
 @st.cache_data(ttl=300)
 def get_jeonse(region):
-    return get_jeonse_rate_analysis(region)
+    s = _import_stats()
+    return s['get_jeonse_rate_analysis'](region)
 
 
 @st.cache_data(ttl=300)
 def get_chart_paths(region):
+    from report.html_report import CHART_DIR
     chart_prefix = region.replace(' ', '_')
     today = datetime.now().strftime('%Y%m%d')
     paths = {}
@@ -306,6 +340,33 @@ def get_chart_paths(region):
         if os.path.exists(p):
             paths[name] = p
     return paths
+
+
+# ==================== Pagination Helper ====================
+
+def render_df(df, page_size=50, key="df"):
+    """DataFrame pagination: renders pagination controls + dataframe slice."""
+    if df is None or df.empty:
+        st.info("데이터 없음")
+        return
+    total = len(df)
+    pages = max(1, (total - 1) // page_size + 1)
+    pk = f"{key}_p"
+    if pk not in st.session_state:
+        st.session_state[pk] = 0
+    st.session_state[pk] = min(st.session_state[pk], pages - 1)
+    p = st.session_state[pk]
+    c1, c2, c3 = st.columns([1, 3, 1])
+    with c1:
+        st.button("◀", key=f"{key}_b", disabled=(p <= 0),
+                  on_click=lambda pk=pk, p=p: setattr(st.session_state, pk, p - 1))
+    with c2:
+        st.caption(f"{p * page_size + 1}~{min((p + 1) * page_size, total)} / {total}건")
+    with c3:
+        st.button("▶", key=f"{key}_n", disabled=(p >= pages - 1),
+                  on_click=lambda pk=pk, p=p: setattr(st.session_state, pk, p + 1))
+    st.dataframe(df.iloc[p * page_size:(p + 1) * page_size],
+                 use_container_width=True, hide_index=True)
 
 
 # ==================== 앱 ====================
@@ -334,151 +395,158 @@ s = get_stats(region)
 
 # ===== TAB 1: 개요 =====
 with tab1:
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">평균 매매가</div><div class="metric-value">{s["avg_price"]/10000:.1f}억</div><div class="metric-sub">평균 {s["avg_area"]:.0f}m²</div></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">매매 거래</div><div class="metric-value">{s["total_trades"]:,}건</div><div class="metric-sub">최근 3개월 {s["trades"]}건</div></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown(f'<div class="metric-card"><div class="metric-label">전월세 거래</div><div class="metric-value">{s["rents"]:,}건</div><div class="metric-sub">전세 평균 {s["avg_deposit"]/10000:.1f}억</div></div>', unsafe_allow_html=True)
-    with col4:
-        if s["avg_price"] > 0:
-            rate = s["avg_deposit"] / s["avg_price"] * 100
-            st.markdown(f'<div class="metric-card"><div class="metric-label">전세가율</div><div class="metric-value">{rate:.1f}%</div><div class="metric-sub">{s["avg_deposit"]/10000:.1f}억 / {s["avg_price"]/10000:.1f}억</div></div>', unsafe_allow_html=True)
+    with st.spinner("📊 데이터 로딩 중..."):
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">평균 매매가</div><div class="metric-value">{s["avg_price"]/10000:.1f}억</div><div class="metric-sub">평균 {s["avg_area"]:.0f}m²</div></div>', unsafe_allow_html=True)
+        with col2:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">매매 거래</div><div class="metric-value">{s["total_trades"]:,}건</div><div class="metric-sub">최근 3개월 {s["trades"]}건</div></div>', unsafe_allow_html=True)
+        with col3:
+            st.markdown(f'<div class="metric-card"><div class="metric-label">전월세 거래</div><div class="metric-value">{s["rents"]:,}건</div><div class="metric-sub">전세 평균 {s["avg_deposit"]/10000:.1f}억</div></div>', unsafe_allow_html=True)
+        with col4:
+            if s["avg_price"] > 0:
+                rate = s["avg_deposit"] / s["avg_price"] * 100
+                st.markdown(f'<div class="metric-card"><div class="metric-label">전세가율</div><div class="metric-value">{rate:.1f}%</div><div class="metric-sub">{s["avg_deposit"]/10000:.1f}억 / {s["avg_price"]/10000:.1f}억</div></div>', unsafe_allow_html=True)
 
-    charts = get_chart_paths(region)
-    if charts:
-        st.subheader("📈 차트")
-        for name, path in charts.items():
-            titles = {'price_trend': '매매가 추이', 'jeonse_rate': '전세가율', 'gap': '갭 분석'}
-            st.caption(titles.get(name, name))
-            st.image(path, use_container_width=True)
+        charts = get_chart_paths(region)
+        if charts:
+            st.subheader("📈 차트")
+            for name, path in charts.items():
+                titles = {'price_trend': '매매가 추이', 'jeonse_rate': '전세가율', 'gap': '갭 분석'}
+                st.caption(titles.get(name, name))
+                st.image(path, use_container_width=True)
 
-    with st.expander("📦 데이터 소스 현황 (Phase 5)", expanded=False):
-        st.markdown("""
-        - **매매 데이터**: 국토교통부 실거래가 API (apt_trade)
-        - **전세 데이터**: 국토교통부 전월세 API (apt_rent)
-        - **데이터 기간**: 2020년 ~ 현재
-        - **ML 모델 상태**: Mock (실제 XGBoost/LR 모델 프로토타입)
-        - **알림 엔진**: SQLite 기반 Watchlist (phase_2)
-        - **백테스트 엔진**: 월별 리밸런싱 시뮬레이터 (phase_4)
-        """)
+        with st.expander("📦 데이터 소스 현황 (Phase 5)", expanded=False):
+            st.markdown("""
+            - **매매 데이터**: 국토교통부 실거래가 API (apt_trade)
+            - **전세 데이터**: 국토교통부 전월세 API (apt_rent)
+            - **데이터 기간**: 2020년 ~ 현재
+            - **ML 모델 상태**: Mock (실제 XGBoost/LR 모델 프로토타입)
+            - **알림 엔진**: SQLite 기반 Watchlist (phase_2)
+            - **백테스트 엔진**: 월별 리밸런싱 시뮬레이터 (phase_4)
+            """)
 
 # ===== TAB 2: 동별 =====
 with tab2:
-    df = get_dong_stats(region)
-    if not df.empty:
-        st.dataframe(df.rename(columns={
-            'dong': '동', 'avg_price': '평균가(만원)', 'cnt': '거래건수', 'avg_area': '평균면적(m²)'
-        }), use_container_width=True, hide_index=True,
-            column_config={"평균가(만원)": st.column_config.NumberColumn(format="%.0f")})
-    else:
-        st.info("데이터 없음")
+    with st.spinner("📍 동별 데이터 로딩 중..."):
+        df = get_dong_stats(region)
+        if not df.empty:
+            render_df(df.rename(columns={
+                'dong': '동', 'avg_price': '평균가(만원)', 'cnt': '거래건수', 'avg_area': '평균면적(m²)'
+            }), key="dong_stats",
+                column_config={"평균가(만원)": st.column_config.NumberColumn(format="%.0f")})
+        else:
+            st.info("데이터 없음")
 
 # ===== TAB 3: 단지별 =====
 with tab3:
-    df = get_top_apts(region)
-    if not df.empty:
-        df['평균가(억)'] = df['avg_price'] / 10000
+    with st.spinner("🏢 단지별 데이터 로딩 중..."):
+        df = get_top_apts(region)
+        if not df.empty:
+            df['평균가(억)'] = df['avg_price'] / 10000
 
-        search_term = st.text_input("🔍 아파트명 검색", placeholder="예: 래미안, 자이, 푸르지오...")
-        if search_term:
-            df = df[df['apt_name'].str.contains(search_term, na=False)]
+            search_term = st.text_input("🔍 아파트명 검색", placeholder="예: 래미안, 자이, 푸르지오...")
+            if search_term:
+                df = df[df['apt_name'].str.contains(search_term, na=False)]
 
-        st.dataframe(df.rename(columns={
-            'apt_name': '아파트', 'dong': '동', 'cnt': '거래건수', 'avg_area': '면적(m²)'
-        }).drop(columns=['avg_price']),
-            use_container_width=True, hide_index=True,
-            column_config={"평균가(억)": st.column_config.NumberColumn(format="%.1f")})
+            st.dataframe(df.rename(columns={
+                'apt_name': '아파트', 'dong': '동', 'cnt': '거래건수', 'avg_area': '면적(m²)'
+            }).drop(columns=['avg_price']),
+                use_container_width=True, hide_index=True,
+                column_config={"평균가(억)": st.column_config.NumberColumn(format="%.1f")})
 
-        st.subheader("단지별 상세 보기")
-        for _, row in df.head(5).iterrows():
-            apt = row['apt_name']
-            with st.expander(f"📋 {apt} 상세"):
-                hist = get_apt_price_history(region, apt)
-                if not hist.empty:
-                    hist['가격(억)'] = hist['price'] / 10000
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        fig_hist = go.Figure()
-                        fig_hist.add_trace(go.Scatter(
-                            x=hist["deal_date"], y=hist["가격(억)"],
-                            mode="markers",
-                            marker=dict(color="#FF4B4B", size=6),
-                            hovertemplate="%{x}<br>%{y:.2f}억<extra></extra>"
-                        ))
-                        fig_hist.update_layout(
-                            title="실거래가 이력",
-                            xaxis_title="거래일",
-                            yaxis_title="가격 (억원)",
-                            template="plotly_white", height=280
-                        )
-                        st.plotly_chart(fig_hist, use_container_width=True)
-                    with col_b:
-                        fig_floor = go.Figure()
-                        fig_floor.add_trace(go.Histogram(
-                            x=hist["floor"], nbinsx=15,
-                            marker_color="#4B8BFF", opacity=0.7,
-                            name="층수 분포"
-                        ))
-                        fig_floor.update_layout(
-                            title="층수 분포",
-                            xaxis_title="층",
-                            yaxis_title="거래건수",
-                            template="plotly_white", height=280
-                        )
-                        st.plotly_chart(fig_floor, use_container_width=True)
-                else:
-                    st.info("거래 이력 없음")
-    else:
-        st.info("데이터 없음")
+            st.subheader("단지별 상세 보기")
+            for _, row in df.head(5).iterrows():
+                apt = row['apt_name']
+                with st.expander(f"📋 {apt} 상세"):
+                    hist = get_apt_price_history(region, apt)
+                    if not hist.empty:
+                        hist['가격(억)'] = hist['price'] / 10000
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            fig_hist = go.Figure()
+                            fig_hist.add_trace(go.Scatter(
+                                x=hist["deal_date"], y=hist["가격(억)"],
+                                mode="markers",
+                                marker=dict(color="#FF4B4B", size=6),
+                                hovertemplate="%{x}<br>%{y:.2f}억<extra></extra>"
+                            ))
+                            fig_hist.update_layout(
+                                title="실거래가 이력",
+                                xaxis_title="거래일",
+                                yaxis_title="가격 (억원)",
+                                template="plotly_white", height=280
+                            )
+                            st.plotly_chart(fig_hist, use_container_width=True)
+                        with col_b:
+                            fig_floor = go.Figure()
+                            fig_floor.add_trace(go.Histogram(
+                                x=hist["floor"], nbinsx=15,
+                                marker_color="#4B8BFF", opacity=0.7,
+                                name="층수 분포"
+                            ))
+                            fig_floor.update_layout(
+                                title="층수 분포",
+                                xaxis_title="층",
+                                yaxis_title="거래건수",
+                                template="plotly_white", height=280
+                            )
+                            st.plotly_chart(fig_floor, use_container_width=True)
+                    else:
+                        st.info("거래 이력 없음")
+        else:
+            st.info("데이터 없음")
 
 # ===== TAB 4: 전세 =====
 with tab4:
-    df = get_jeonse(region)
-    if df is not None and not df.empty:
-        st.metric("평균 전세가율", f"{df['전세가율'].mean():.1f}%")
-        st.plotly_chart(make_jeonse_rate_chart(df), use_container_width=True)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("전세 데이터가 충분하지 않습니다")
+    with st.spinner("🔵 전세가율 분석 중..."):
+        df = get_jeonse(region)
+        if df is not None and not df.empty:
+            st.metric("평균 전세가율", f"{df['전세가율'].mean():.1f}%")
+            st.plotly_chart(make_jeonse_rate_chart(df), use_container_width=True)
+            render_df(df, key="jeonse")
+        else:
+            st.info("전세 데이터가 충분하지 않습니다")
 
 # ===== TAB 5: 추이 =====
 with tab5:
-    df = get_trend(region)
-    if df is not None and not df.empty:
-        df['평균매매가(억)'] = df['평균매매가'] / 10000
-        st.plotly_chart(make_price_trend_chart(df), use_container_width=True)
-        st.dataframe(df[['월', '거래건수', '평균매매가(억)', '평균면적']], use_container_width=True, hide_index=True)
-    else:
-        st.info("데이터 없음")
+    with st.spinner("📈 추이 데이터 로딩 중..."):
+        df = get_trend(region)
+        if df is not None and not df.empty:
+            df['평균매매가(억)'] = df['평균매매가'] / 10000
+            st.plotly_chart(make_price_trend_chart(df), use_container_width=True)
+            st.dataframe(df[['월', '거래건수', '평균매매가(억)', '평균면적']], use_container_width=True, hide_index=True)
+        else:
+            st.info("데이터 없음")
 
 # ===== TAB 6: 갭 투자 =====
 with tab6:
-    st.subheader("💰 갭 투자 스크리너")
-    col1, col2 = st.columns(2)
-    with col1:
-        min_rate = st.slider("최소 전세가율 (%)", 50, 95, 70)
-    with col2:
-        max_gap = st.slider("최대 갭 (억원)", 1, 10, 5)
-    df = scan_gap_opportunities(min_rate=min_rate, max_rate=100, max_gap=max_gap*10000, min_trades=3)
-    if df is not None and not df.empty:
-        df['전세가율'] = df['jeonse_rate']
-        df['갭(억)'] = (df['gap'] / 10000).round(1)
-        df['매매가(억)'] = (df['avg_price'] / 10000).round(1)
-        df['전세가(억)'] = (df['avg_deposit'] / 10000).round(1)
-        st.plotly_chart(make_gap_scatter(df), use_container_width=True)
-        st.dataframe(df[['region', 'apt_name', 'dong', '전세가율', '갭(억)', '매매가(억)', '전세가(억)', 'trade_count']].rename(columns={
-            'region': '지역', 'apt_name': '아파트', 'dong': '동', 'trade_count': '거래건수'
-        }), use_container_width=True, hide_index=True,
-            column_config={
-                "전세가율": st.column_config.NumberColumn(format="%.1f%%"),
-                "갭(억)": st.column_config.NumberColumn(format="%.1f억"),
-                "매매가(억)": st.column_config.NumberColumn(format="%.1f억"),
-                "전세가(억)": st.column_config.NumberColumn(format="%.1f억"),
-            })
-    else:
-        st.info("조건에 맞는 단지가 없습니다")
+    with st.spinner("💰 갭 투자 분석 중..."):
+        st.subheader("💰 갭 투자 스크리너")
+        col1, col2 = st.columns(2)
+        with col1:
+            min_rate = st.slider("최소 전세가율 (%)", 50, 95, 70)
+        with col2:
+            max_gap = st.slider("최대 갭 (억원)", 1, 10, 5)
+        from strategy.gap_scanner import scan_gap_opportunities
+        df = scan_gap_opportunities(min_rate=min_rate, max_rate=100, max_gap=max_gap*10000, min_trades=3)
+        if df is not None and not df.empty:
+            df['전세가율'] = df['jeonse_rate']
+            df['갭(억)'] = (df['gap'] / 10000).round(1)
+            df['매매가(억)'] = (df['avg_price'] / 10000).round(1)
+            df['전세가(억)'] = (df['avg_deposit'] / 10000).round(1)
+            st.plotly_chart(make_gap_scatter(df), use_container_width=True)
+            render_df(df[['region', 'apt_name', 'dong', '전세가율', '갭(억)', '매매가(억)', '전세가(억)', 'trade_count']].rename(columns={
+                'region': '지역', 'apt_name': '아파트', 'dong': '동', 'trade_count': '거래건수'
+            }), key="gap",
+                column_config={
+                    "전세가율": st.column_config.NumberColumn(format="%.1f%%"),
+                    "갭(억)": st.column_config.NumberColumn(format="%.1f억"),
+                    "매매가(억)": st.column_config.NumberColumn(format="%.1f억"),
+                    "전세가(억)": st.column_config.NumberColumn(format="%.1f억"),
+                })
+        else:
+            st.info("조건에 맞는 단지가 없습니다")
 
 # ===== TAB 7: 예산 로드맵 =====
 with tab7:
@@ -488,14 +556,15 @@ with tab7:
         budget = st.number_input("예산 (억원)", 1, 50, 5)
     with col2:
         city = st.selectbox("도시", ["서울특별시", "경기도"])
+    from strategy.region_planner import find_regions_by_budget
     df = find_regions_by_budget(budget_ok=budget, city=city)
     if df is not None and not df.empty:
         df['매매가(억)'] = (df['avg_price'] / 10000).round(1)
         df['전세가(억)'] = (df['avg_deposit'] / 10000).round(1)
         df['갭(억)'] = (df['gap'] / 10000).round(1)
-        st.dataframe(df[['region', '매매가(억)', '전세가(억)', 'jeonse_rate', '갭(억)', 'apt_count', 'trade_count']].rename(columns={
+        render_df(df[['region', '매매가(억)', '전세가(억)', 'jeonse_rate', '갭(억)', 'apt_count', 'trade_count']].rename(columns={
             'region': '지역', 'jeonse_rate': '전세가율(%)', 'apt_count': '단지수', 'trade_count': '거래건수'
-        }), use_container_width=True, hide_index=True,
+        }), key="budget",
             column_config={
                 "매매가(억)": st.column_config.NumberColumn(format="%.1f억"),
                 "전세가(억)": st.column_config.NumberColumn(format="%.1f억"),
@@ -528,7 +597,8 @@ with tab8:
     sub_a, sub_b, sub_c, sub_d = st.tabs(["🏷️ 평당가", "📅 계절성", "⚠️ 거래공백", "📈 모멘텀"])
 
     with sub_a:
-        df_pyoung = get_pyoung_price(region)
+        s = _import_stats()
+        df_pyoung = s['get_pyoung_price'](region)
         if df_pyoung is not None and not df_pyoung.empty:
             st.dataframe(df_pyoung.head(20).rename(columns={
                 'apt_name': '아파트', 'dong': '동', 'pyoung_price': '평당가(만원)',
@@ -538,7 +608,8 @@ with tab8:
             st.info("평당가 데이터 없음")
 
     with sub_b:
-        df_season = get_seasonal_pattern(region)
+        s = _import_stats()
+        df_season = s['get_seasonal_pattern'](region)
         if df_season is not None and not df_season.empty:
             df_season['월'] = df_season['월'].astype(int)
             st.plotly_chart(make_seasonal_chart(df_season), use_container_width=True)
@@ -550,24 +621,26 @@ with tab8:
             st.info("계절성 데이터 없음")
 
     with sub_c:
-        df_gap = get_trade_gap_alert(months=6)
+        s = _import_stats()
+        df_gap = s['get_trade_gap_alert'](months=6)
         if df_gap is not None and not df_gap.empty:
-            st.dataframe(df_gap.rename(columns={
+            render_df(df_gap.rename(columns={
                 'region': '지역', 'apt_name': '아파트', 'last_trade_date': '마지막거래일',
                 'days_since': '경과일', 'last_price': '마지막가격(만원)'
-            }), use_container_width=True, hide_index=True)
+            }), key="gap_alert")
         else:
             st.info("거래 공백 단지 없음")
 
     with sub_d:
-        df_mom = get_jeonse_momentum(region)
+        s = _import_stats()
+        df_mom = s['get_jeonse_momentum'](region)
         if df_mom is not None and not df_mom.empty:
             rows = []
             for _, r in df_mom.iterrows():
                 arrow = "🔼" if r['전세가율변화'] > 2 else ("🔽" if r['전세가율변화'] < -2 else "➡️")
                 rows.append({"아파트": r['apt_name'], "현재전세가율": f"{r['최근전세가율']:.1f}%",
                              "3개월전": f"{r['이전전세가율']:.1f}%", "변화": f"{arrow} {r['전세가율변화']:+.1f}%"})
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            render_df(pd.DataFrame(rows), key="momentum")
         else:
             st.info("모멘텀 데이터 없음")
 
@@ -800,7 +873,7 @@ with tab11:
                     '임계값': f"{item['alert_threshold_pct']}%",
                     '등록일': item['created_at'],
                 } for item in items])
-                st.dataframe(df_wl, use_container_width=True, hide_index=True)
+                render_df(df_wl, key="watchlist")
 
                 st.subheader("🗑️ 관심 단지 삭제")
                 del_id = st.number_input("삭제할 ID", min_value=1, step=1, key="wl_del")
@@ -913,13 +986,13 @@ with tab12:
                         if result.get('holdings'):
                             st.subheader("📋 최종 보유 단지")
                             df_hold = pd.DataFrame(result['holdings'])
-                            st.dataframe(df_hold, use_container_width=True, hide_index=True)
+                            render_df(df_hold, key="holdings")
 
                         # 거래 내역
                         if result.get('trade_log'):
                             st.subheader("📜 거래 내역")
                             df_trades = pd.DataFrame(result['trade_log'])
-                            st.dataframe(df_trades, use_container_width=True, hide_index=True)
+                            render_df(df_trades, key="trade_log")
 
                 except Exception as e:
                     st.error(f"백테스트 실행 오류: {e}")

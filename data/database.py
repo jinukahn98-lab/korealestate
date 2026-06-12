@@ -10,9 +10,14 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'realestate.d
 
 
 def get_conn():
-    """데이터베이스 연결 반환"""
+    """데이터베이스 연결 반환 (WAL + 64MB cache)"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size=-64000")     # 64MB
+    conn.execute("PRAGMA synchronous=OFF")       # 읽기 전용 최적화
+    conn.execute("PRAGMA temp_store=MEMORY")     # temp table in memory
+    conn.execute("PRAGMA mmap_size=268435456")   # 256MB memory-mapped I/O
     return conn
 
 
@@ -131,6 +136,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_rent_date ON apt_rent(deal_date);
         CREATE INDEX IF NOT EXISTS idx_rent_region ON apt_rent(region);
         CREATE INDEX IF NOT EXISTS idx_zigbang_type ON zigbang_items(sales_type);
+
+        -- 성능 인덱스
+        CREATE INDEX IF NOT EXISTS idx_trade_apt_name ON apt_trade(apt_name);
+        CREATE INDEX IF NOT EXISTS idx_rent_apt_name ON apt_rent(apt_name);
+        CREATE INDEX IF NOT EXISTS idx_trade_region_date ON apt_trade(region, deal_date);
+        CREATE INDEX IF NOT EXISTS idx_rent_region_date ON apt_rent(region, deal_date);
     ''')
 
     conn.commit()
@@ -353,3 +364,15 @@ def get_db_stats():
         stats[table] = cur.fetchone()[0]
     conn.close()
     return stats
+
+
+# Streamlit 연결 풀 (선택적 — st 없어도 작동)
+try:
+    import streamlit as st
+    @st.cache_resource
+    def get_shared_conn():
+        """Streamlit 세션 간 공유 connection (WAL + 64MB cache)"""
+        return get_conn()
+except ImportError:
+    def get_shared_conn():
+        return get_conn()
