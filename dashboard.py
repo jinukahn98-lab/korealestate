@@ -344,8 +344,9 @@ def get_chart_paths(region):
 
 # ==================== Pagination Helper ====================
 
-def render_df(df, page_size=50, key="df"):
-    """DataFrame pagination: renders pagination controls + dataframe slice."""
+def render_df(df, page_size=50, key="df", **kwargs):
+    """DataFrame pagination: renders pagination controls + dataframe slice.
+    Extra kwargs (e.g. column_config) are forwarded to st.dataframe."""
     if df is None or df.empty:
         st.info("데이터 없음")
         return
@@ -366,7 +367,7 @@ def render_df(df, page_size=50, key="df"):
         st.button("▶", key=f"{key}_n", disabled=(p >= pages - 1),
                   on_click=lambda pk=pk, p=p: setattr(st.session_state, pk, p + 1))
     st.dataframe(df.iloc[p * page_size:(p + 1) * page_size],
-                 use_container_width=True, hide_index=True)
+                 use_container_width=True, hide_index=True, **kwargs)
 
 
 # ==================== 앱 ====================
