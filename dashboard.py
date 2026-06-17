@@ -386,10 +386,11 @@ sido = st.sidebar.selectbox("시/도", load_sido_list())
 regions = load_region_list_by_sido(sido)
 region = st.sidebar.selectbox("시/군/구", regions)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
     "📊 개요", "📍 동별", "🏢 단지별", "🔵 전세", "📈 추이",
     "💰 갭 투자", "💡 예산", "📊 고급 분석", "🏆 추천",
-    "🏢 단지 추천", "🔔 Watchlist", "📊 포트폴리오/백테스트"
+    "🏢 단지 추천", "🔔 Watchlist", "📊 포트폴리오/백테스트",
+    "📰 외부 리포트"
 ])
 
 s = get_stats(region)
@@ -1028,4 +1029,58 @@ with tab12:
     except Exception as e:
         st.error(f"포트폴리오/백테스트 오류: {e}")
 
-st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 데이터 출처: 국토교통부 실거래가 API")
+# ===== TAB 13: 외부 리포트 (정책/시장/개발) =====
+with tab13:
+    st.subheader("📰 외부 리포트 대시보드")
+    st.caption("KB 부동산 통계 · 구글 뉴스 · 정부 정책 수집 데이터 기반 (일 07:00 갱신)")
+
+    import json, os
+    _REPORT_DIR = os.path.join(os.path.dirname(__file__), "data", "external_reports")
+
+    @st.cache_data(ttl=3600)
+    def _load_report(name):
+        path = os.path.join(_REPORT_DIR, f"{name}.json")
+        if os.path.exists(path):
+            return json.load(open(path, encoding='utf-8'))
+        return None
+
+    @st.cache_data(ttl=3600)
+    def _load_manifest():
+        path = os.path.join(_REPORT_DIR, "manifest.json")
+        if os.path.exists(path):
+            return json.load(open(path, encoding='utf-8'))
+        return {"exported_at": "N/A", "pages": {}}
+
+    manifest = _load_manifest()
+    st.caption(f"🕐 마지막 갱신: {manifest['exported_at'][:19] if manifest['exported_at'] != 'N/A' else '없음'}")
+
+    tab_r1, tab_r2, tab_r3 = st.tabs(["🏛️ 정책 현황", "📊 시장 동향", "🏗️ 개발 호재"])
+
+    with tab_r1:
+        data = _load_report("current-policy")
+        if data:
+            for sec in data['sections']:
+                with st.expander(f"**{sec['title']}**", expanded=(sec['title'] == '(서문)')):
+                    st.markdown(sec['content'])
+        else:
+            st.info("정책 데이터가 없습니다. 외부 리포트 수집 크론(07:00) 실행 후 확인하세요.")
+
+    with tab_r2:
+        data = _load_report("market-trends")
+        if data:
+            for sec in data['sections']:
+                with st.expander(f"**{sec['title']}**", expanded=(sec['title'] == '(서문)')):
+                    st.markdown(sec['content'])
+        else:
+            st.info("시장 동향 데이터가 없습니다. 외부 리포트 수집 크론(07:00) 실행 후 확인하세요.")
+
+    with tab_r3:
+        data = _load_report("development-projects")
+        if data:
+            for sec in data['sections']:
+                with st.expander(f"**{sec['title']}**", expanded=(sec['title'] == '(서문)')):
+                    st.markdown(sec['content'])
+        else:
+            st.info("개발 호재 데이터가 없습니다. 외부 리포트 수집 크론(07:00) 실행 후 확인하세요.")
+
+st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 데이터 출처: 국토교통부 실거래가 API · KB 부동산 · 구글 뉴스")

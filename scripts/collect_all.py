@@ -4,6 +4,8 @@
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
 from data.database import init_db, save_apt_trades, save_apt_rents
 from data.legal_dong_codes import save_to_db, get_all_regions
 import requests, time
