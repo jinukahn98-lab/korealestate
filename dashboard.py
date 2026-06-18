@@ -16,6 +16,11 @@ from plotly.subplots import make_subplots
 sys.path.insert(0, os.path.dirname(__file__))
 from data.database import DB_PATH
 
+# v3.0 lazy import (sklearn 의존성 우회)
+def _get_scorer_v3():
+    from strategy.scorer_v3 import ScorerV3
+    return ScorerV3()
+
 # --- 부트스트랩: DB 자동 다운로드 ---
 DB_GZ_URL = "https://github.com/jinukahn98-lab/korealestate/releases/download/v1.0/realestate.db.gz"
 
@@ -386,11 +391,11 @@ sido = st.sidebar.selectbox("시/도", load_sido_list())
 regions = load_region_list_by_sido(sido)
 region = st.sidebar.selectbox("시/군/구", regions)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "📊 개요", "📍 동별", "🏢 단지별", "🔵 전세", "📈 추이",
     "💰 갭 투자", "💡 예산", "📊 고급 분석", "🏆 추천",
     "🏢 단지 추천", "🔔 Watchlist", "📊 포트폴리오/백테스트",
-    "📰 외부 리포트"
+    "📰 외부 리포트", "🤖 v3.0 통합"
 ])
 
 s = get_stats(region)
@@ -1082,5 +1087,88 @@ with tab13:
                     st.markdown(sec['content'])
         else:
             st.info("개발 호재 데이터가 없습니다. 외부 리포트 수집 크론(07:00) 실행 후 확인하세요.")
+
+# ===== TAB 14: v3.0 통합 스코어 =====
+with tab14:
+    st.markdown("## 🤖 v3.0 통합 스코어 — 13개 요소, 6개 외부 소스")
+    with st.spinner("ScorerV3 로딩 중..."):
+        try:
+            s = _get_scorer_v3()
+        except Exception as e:
+            st.error(f"ScorerV3 로드 실패: {e}")
+            st.stop()
+    
+    # 전체 지역 스코어
+    regions = [r[0] for r in s.conn.execute("SELECT DISTINCT region FROM apt_trade ORDER BY region").fetchall()]
+    results = []
+    for r in regions:
+        try:
+            results.append(s.score_region(r))
+        except Exception:
+            continue
+    results.sort(key=lambda x: x['total_score'], reverse=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        bt = s.backtest()
+        st.metric("백테스트 상관계수", f"{bt['correlation']:.3f}", delta=f"n={bt['count']}")
+    with col2:
+        st.metric("분석 요소", "13개 (DB 6 + 외부 6 + 계층 1)")
+    with col3:
+        st.metric("분석 지역", f"{len(results)}개")
+    
+    # TOP 20 테이블
+    st.markdown("### 🏆 TOP 20")
+    top_df = pd.DataFrame([{
+        '순위': i+1, '지역': r['region'].replace('서울특별시 ','').replace('경기도 ',''),
+        '점수': r['total_score'], '등급': r['grade']
+    } for i, r in enumerate(results[:20])])
+    
+    def _color_grade(val):
+        colors = {'🔥 강력매수': 'background:#ff4b4b;color:white',
+                  '✅ 매수': 'background:#00c853;color:white',
+                  '➡️ 관망': 'background:#ffd600;color:black',
+                  '⚠️ 매도': 'background:#ff6f00;color:white',
+                  '🔴 긴급매도': 'background:#d50000;color:white'}
+        return colors.get(val, '')
+    
+    st.dataframe(top_df.style.applymap(_color_grade, subset=['등급']), use_container_width=True, height=520)
+    
+    # 지역 상세 분석
+    st.markdown("### 🔍 지역 상세 분석")
+    sel = st.selectbox("지역 선택", [r['region'] for r in results], 
+                       format_func=lambda x: x.replace('서울특별시 ','').replace('경기도 ',''))
+    detail = s.score_region(sel)
+    
+    # Factor bar chart
+    factors_df = pd.DataFrame([{
+        '요소': k, '점수': v['score'], '값': v['value']
+    } for k, v in detail['factors'].items()])
+    factors_df = factors_df.sort_values('점수', ascending=True)
+    
+    import plotly.express as px
+    fig = px.bar(factors_df, x='점수', y='요소', orientation='h',
+                 text='값', color='점수',
+                 color_continuous_scale='RdYlGn',
+                 title=f"{sel.replace('서울특별시 ','').replace('경기도 ','')} — {detail['total_score']}점 {detail['grade']}")
+    fig.update_layout(height=500, margin=dict(l=0, r=0, t=40, b=0))
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # ML optimizer
+    st.markdown("---")
+    st.markdown("### 🤖 ML 가중치 최적화")
+    if st.button("🚀 가중치 최적화 실행 (numpy brute-force)", use_container_width=True):
+        with st.spinner("최적화 중... (33개 지역 × 125개 조합)"):
+            try:
+                from strategy.ml_optimizer import MLOptimizer
+                m = MLOptimizer()
+                data = m.collect_training_data()
+                best_w, best_c = m.optimize_weights()
+                st.success(f"✅ 최적화 완료! 상관계수: 0.800 → **{best_c:.3f}**")
+                st.json(best_w.tolist() if hasattr(best_w, 'tolist') else best_w)
+            except Exception as e:
+                st.error(f"최적화 실패: {e}")
+    
+    s.close()
 
 st.caption(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')} · 데이터 출처: 국토교통부 실거래가 API · KB 부동산 · 구글 뉴스")

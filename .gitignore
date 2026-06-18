@@ -3,7 +3,13 @@ __pycache__/
 *.pyc
 .env
 realestate.db
+realestate.db-shm
+realestate.db-wal
+*.db-shm
+*.db-wal
 .DS_Store
 charts/
+analyze_*.py
+naver_news*.py
 .hermes/
 *.sql
