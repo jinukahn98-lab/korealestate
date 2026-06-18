@@ -33,6 +33,6 @@ else
 fi
 
 echo "=== Starting Streamlit ==="
-exec streamlit run app.py \
+exec streamlit run app_v3.py \
     --server.port=7860 \
     --server.address=0.0.0.0
