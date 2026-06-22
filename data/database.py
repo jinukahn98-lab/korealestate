@@ -68,6 +68,54 @@ def init_db():
             UNIQUE(lawd_cd, apt_name, area, floor, deal_date, deposit, rent)
         );
 
+        CREATE TABLE IF NOT EXISTS hogang_apts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apt_hash TEXT UNIQUE NOT NULL,
+            apt_name TEXT NOT NULL,
+            address TEXT,
+            road_address TEXT,
+            region_code TEXT,
+            lat REAL,
+            lng REAL,
+            household INTEGER DEFAULT 0,
+            trade_count INTEGER DEFAULT 0,
+            collected_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS hogang_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apt_hash TEXT NOT NULL,
+            apt_name TEXT,
+            area_no INTEGER DEFAULT 1,
+            room_type TEXT,
+            trade_type INTEGER NOT NULL,    -- 0=매매 1=전세 2=월세
+            trade_date TEXT NOT NULL,        -- YYYY-MM-DD
+            price INTEGER,                   -- 만원
+            floor INTEGER,
+            category INTEGER,               -- 1=매매 2=전세 3=월세
+            is_lower_floor INTEGER DEFAULT 0,
+            collected_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(apt_hash, trade_type, area_no, trade_date, price, floor)
+        );
+
+        CREATE TABLE IF NOT EXISTS hogang_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apt_hash TEXT NOT NULL,
+            item_id TEXT UNIQUE,
+            apt_name TEXT,
+            title TEXT,
+            price INTEGER,
+            deposit INTEGER,
+            rent INTEGER,
+            area REAL,
+            floor INTEGER,
+            sales_type TEXT,
+            lat REAL,
+            lng REAL,
+            address TEXT,
+            collected_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS zigbang_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id TEXT UNIQUE,
@@ -136,6 +184,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_rent_date ON apt_rent(deal_date);
         CREATE INDEX IF NOT EXISTS idx_rent_region ON apt_rent(region);
         CREATE INDEX IF NOT EXISTS idx_zigbang_type ON zigbang_items(sales_type);
+
+        CREATE INDEX IF NOT EXISTS idx_hogang_trades_hash ON hogang_trades(apt_hash);
+        CREATE INDEX IF NOT EXISTS idx_hogang_trades_date ON hogang_trades(trade_date);
+        CREATE INDEX IF NOT EXISTS idx_hogang_trades_type ON hogang_trades(trade_type);
+        CREATE INDEX IF NOT EXISTS idx_hogang_items_hash ON hogang_items(apt_hash);
+        CREATE INDEX IF NOT EXISTS idx_hogang_items_sales ON hogang_items(sales_type);
 
         -- 성능 인덱스
         CREATE INDEX IF NOT EXISTS idx_trade_apt_name ON apt_trade(apt_name);
@@ -359,7 +413,7 @@ def get_db_stats():
     conn = get_conn()
     cur = conn.cursor()
     stats = {}
-    for table in ['apt_trade', 'apt_rent', 'zigbang_items']:
+    for table in ['apt_trade', 'apt_rent', 'zigbang_items', 'kb_price', 'hogang_apts', 'hogang_trades', 'hogang_items']:
         cur.execute(f'SELECT COUNT(*) FROM {table}')
         stats[table] = cur.fetchone()[0]
     conn.close()

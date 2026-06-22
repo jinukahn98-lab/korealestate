@@ -22,7 +22,7 @@ from datetime import datetime
 # 프로젝트 루트를 sys.path에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data.database import init_db, get_db_stats, save_apt_trades, save_apt_rents, save_zigbang_items
+from data.database import init_db, get_db_stats, save_apt_trades, save_apt_rents, save_zigbang_items, get_conn
 from data.legal_dong_codes import (
     search_region, get_region_name, get_all_regions,
     get_cities, get_districts, find_code_by_name, save_to_db
@@ -59,9 +59,11 @@ def cmd_collect(args):
         _collect_molit(args)
     elif args.type == 'zigbang' or args.type == '직방':
         _collect_zigbang(args)
+    elif args.type == 'hogang' or args.type == '호갱':
+        _collect_hogang(args)
     else:
         print(f"❌ 알 수 없는 수집 타입: {args.type}")
-        print("   가능: molit(실거래), zigbang(직방)")
+        print("   가능: molit(실거래), zigbang(직방), hogang(호갱)")
 
 
 def _collect_molit(args):
@@ -124,6 +126,140 @@ def _collect_zigbang(args):
         types = Counter(item['sales_type'] for item in items)
         for t, c in types.items():
             print(f"     - {t}: {c}개")
+
+
+def _collect_hogang(args):
+    """호갱노노 데이터 수집"""
+    from collectors.hogangnono import (
+        search_apts, get_apt_simple, get_room_types,
+        get_monthly_reports, get_items, TRADE_TYPE_LABEL
+    )
+    from data.database import get_conn
+    import time
+
+    conn = get_conn()
+    cur = conn.cursor()
+    saved_apts = 0
+    saved_trades = 0
+    saved_items = 0
+
+    query = args.query or args.region
+    if not query:
+        print("❌ --query (-q) 또는 --region 으로 검색어를 입력하세요")
+        return
+
+    # 1) 단지 검색
+    print(f"🔍 호갱노노 검색: '{query}'")
+    apts = search_apts(query)
+    if not apts:
+        print("❌ 검색 결과 없음")
+        return
+
+    # 특정 hash가 주어졌으면 필터
+    if args.hash:
+        apts = [a for a in apts if a['id'] == args.hash]
+
+    print(f"   → {len(apts)}개 단지 발견")
+
+    for i, apt in enumerate(apts[:20]):
+        apt_hash = apt['id']
+        apt_name = apt['name']
+        print(f"\n[{i+1}/{min(len(apts),20)}] {apt_name} ({apt_hash})")
+
+        # 저장: hogang_apts
+        cur.execute('''
+            INSERT OR IGNORE INTO hogang_apts
+            (apt_hash, apt_name, address, road_address, region_code, lat, lng, household, trade_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            apt_hash, apt_name, apt.get('address'), apt.get('road_address'),
+            apt.get('region_code'), apt.get('lat'), apt.get('lng'),
+            apt.get('household'), apt.get('trade_count')
+        ))
+        if cur.rowcount > 0:
+            saved_apts += 1
+
+        # 2) 평형 정보
+        rts = get_room_types(apt_hash)
+        print(f"   평형: {len(rts)}종")
+
+        # 3) 첫 3개 평형의 실거래가 수집
+        for area_idx, rt in enumerate(rts[:3]):
+            area_no = area_idx + 1
+            rt_name = rt.get('zigbangRoomType', f'area{area_no}')
+
+            for tt, label in TRADE_TYPE_LABEL.items():
+                reports = get_monthly_reports(apt_hash, tt, area_no)
+                if not reports:
+                    continue
+
+                for month in reports:
+                    trade_date = month.get('date', '')[:10]
+                    if trade_date:
+                        trade_date = trade_date.replace('T', ' ')
+                    avg_price = month.get('averagePrice', 0)
+
+                    # 개별 거래 내역 저장
+                    for trade in month.get('trades', []):
+                        price = trade.get('price') or month.get('averagePrice', 0)
+                        floor = trade.get('floor', 0)
+                        day = trade.get('day', 1)
+                        category = trade.get('category', 1)
+                        is_lower = 1 if trade.get('isLowerFloor') else 0
+
+                        # deal_date = trade_date + day
+                        try:
+                            dt = f"{trade_date[:7]}-{day:02d}" if trade_date and day else trade_date
+                        except:
+                            dt = trade_date
+
+                        cur.execute('''
+                            INSERT OR IGNORE INTO hogang_trades
+                            (apt_hash, apt_name, area_no, room_type, trade_type,
+                             trade_date, price, floor, category, is_lower_floor)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            apt_hash, apt_name, area_no, rt_name, tt,
+                            dt, price, floor, category, is_lower
+                        ))
+                        if cur.rowcount > 0:
+                            saved_trades += 1
+
+                time.sleep(0.1)  # rate limit
+
+        # 4) 현재 매물 수집
+        items = get_items(apt_hash)
+        for item in items[:30]:
+            item_id = str(item.get('item_id', ''))
+            if not item_id:
+                continue
+            cur.execute('''
+                INSERT OR IGNORE INTO hogang_items
+                (apt_hash, item_id, apt_name, title, price, deposit, rent,
+                 area, floor, sales_type, lat, lng, address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                apt_hash, item_id, apt_name,
+                item.get('title', ''),
+                int(item.get('price', 0) or 0),
+                int(item.get('deposit', 0) or 0),
+                int(item.get('rent', 0) or 0),
+                float(item.get('area', 0) or 0),
+                int(item.get('floor', 0) or 0),
+                item.get('sales_type', ''),
+                float(item.get('lat', 0) or 0),
+                float(item.get('lng', 0) or 0),
+                item.get('address', ''),
+            ))
+            if cur.rowcount > 0:
+                saved_items += 1
+
+        conn.commit()
+        time.sleep(0.5)  # 다음 단지 전 대기
+
+    conn.close()
+    print(f"\n✅ 호갱노노 수집 완료!")
+    print(f"   단지: {saved_apts}건 / 실거래: {saved_trades}건 / 현재매물: {saved_items}건")
 
 
 def cmd_analyze(args):
@@ -309,6 +445,23 @@ def cmd_status(args):
     print(f"     - 아파트 매매: {stats.get('apt_trade', 0):,}건")
     print(f"     - 아파트 전월세: {stats.get('apt_rent', 0):,}건")
     print(f"     - 직방 현재매물: {stats.get('zigbang_items', 0):,}건")
+    print(f"     - KB부동산: {stats.get('kb_price', 0):,}건")
+    print(f"     - 호갱노노 단지: {stats.get('hogang_apts', 0):,}개")
+    print(f"     - 호갱노노 실거래: {stats.get('hogang_trades', 0):,}건")
+
+    # 데이터 기간
+    conn = get_conn()
+    try:
+        for table, label, date_col in [
+            ('apt_trade', 'MOLIT 매매', 'deal_date'),
+            ('hogang_trades', '호갱노노', 'trade_date'),
+        ]:
+            r = conn.execute(f'SELECT MIN({date_col}), MAX({date_col}) FROM {table}').fetchone()
+            if r and r[0]:
+                print(f"     - {label}: {r[0][:7]} ~ {r[1][:7]}")
+    except:
+        pass
+    conn.close()
 
     check_api_key()
     print(f"\n  📂 프로젝트: {os.path.dirname(__file__)}")
@@ -496,9 +649,11 @@ def main():
 
     # collect
     p_collect = sub.add_parser('collect', aliases=['수집'], help='데이터 수집')
-    p_collect.add_argument('type', choices=['molit', 'zigbang', '실거래', '직방'])
+    p_collect.add_argument('type', choices=['molit', 'zigbang', 'hogang', '실거래', '직방', '호갱'])
     p_collect.add_argument('--code', default='', help='법정동코드 5자리')
     p_collect.add_argument('--region', '-r', default='', help='지역명')
+    p_collect.add_argument('--query', '-q', default='', help='검색어 (hogang)')
+    p_collect.add_argument('--hash', '-H', default='', help='호갱노노 아파트 hash ID')
     p_collect.add_argument('--year', type=int, default=2025, help='년도')
     p_collect.add_argument('--month', type=int, default=datetime.now().month, help='월')
     p_collect.add_argument('--months', '-m', type=int, default=0, help='최근 N개월 수집')

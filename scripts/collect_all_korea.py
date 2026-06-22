@@ -58,7 +58,23 @@ MAJOR = {
 
 TRADE_URL = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade'
 RENT_URL = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent'
-MONTHS = ['202501', '202502', '202503', '202504', '202505']
+
+from datetime import datetime
+
+def _month_range(start_ym='202001'):
+    """Generate YYYYMM list from start_ym to current month"""
+    now = datetime.now()
+    months = []
+    y, m = int(start_ym[:4]), int(start_ym[4:6])
+    while (y, m) <= (now.year, now.month):
+        months.append(f'{y}{m:02d}')
+        m += 1
+        if m > 12:
+            y += 1
+            m = 1
+    return months
+
+MONTHS = _month_range('202001')
 
 def fetch(url, label, code, region_name, months, save_fn):
     total = 0

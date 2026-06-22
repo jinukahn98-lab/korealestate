@@ -31,6 +31,9 @@ REGIONS = {
 PREFIX = {'11':'서울특별시','41':'경기도','26':'부산광역시','27':'대구광역시',
           '28':'인천광역시','29':'광주광역시','30':'대전광역시','36':'세종특별자치시'}
 
+# 목표 데이터 기간
+TARGET_START = '2020-01'        # 수집 시작년월 (YYYY-MM)
+
 def smart_collect():
     """DB 내 전체 월 체크 → 빈 구간 포함 모두 수집"""
     from data.database import get_conn, save_apt_trades, save_apt_rents, init_db
@@ -45,9 +48,8 @@ def smart_collect():
         "SELECT DISTINCT substr(deal_date,1,7) FROM apt_rent WHERE deal_date IS NOT NULL"
     ).fetchall())
     
-    # 전체 범위: min(DB 최초) ~ 현재월
-    all_dates = sorted(trade_months | rent_months)
-    min_ym = all_dates[0] if all_dates else '2024-01'
+    # 전체 범위: target_start ~ 현재월
+    min_ym = TARGET_START
     conn.close()
     
     now = datetime.now()
@@ -70,7 +72,8 @@ def smart_collect():
         return 0, "✅ 전체 월 데이터 완료"
     
     months_short = [m.replace('-','') for m in missing_months]
-    print(f"  📡 누락 월: {missing_months}")
+    print(f"  📡 대상 기간: {TARGET_START} ~ {current_ym} ({len(missing_months)}개월 누락)")
+    print(f"  📡 누락 월: {missing_months[:10]}{'...' if len(missing_months)>10 else ''}")
     
     total = 0
     for code, name in REGIONS.items():
@@ -226,17 +229,120 @@ def main():
     print(f"🏠 부동산 데일리 업데이트 ({now_str})")
     print("=" * 50)
     
-    # Step 1: 데이터 수집
-    print("\n[1/3] 데이터 수집 중...")
+    external_msgs = []
+    hg_count = 0
+    kb_count = 0
+    
+    # Step 1A: MOLIT 데이터 수집
+    print("\n[1A/5] MOLIT 실거래가 수집 중...")
     collected, collect_msg = smart_collect()
     print(f"  {collect_msg}")
     
+    # Step 1B: KB부동산 데이터 수집 (PublicDataReader)
+    print("\n[1B/5] KB부동산 데이터 수집 중...")
+    try:
+        from collectors.kb_price import collect_all_kb
+        kb_count = collect_all_kb()
+        external_msgs.append(f"KB {kb_count}건")
+        print(f"  ✅ KB {kb_count}건 저장")
+    except Exception as e:
+        print(f"  ⚠️ KB 수집 실패: {e}")
+        external_msgs.append("KB ⚠️")
+    
+    # Step 1C: 호갱노노 데이터 수집 (핵심 지역)
+    print("\n[1C/5] 호갱노노 실거래가 수집 중...")
+    try:
+        from collectors.hogangnono import search_apts, get_apt_simple, get_room_types, get_monthly_reports, TRADE_TYPE_LABEL
+        from data.database import get_conn
+        
+        # 핵심 단지 hash (서울 주요 5호선 + 기타)
+        CORE_HASHES = [
+            '18Hb3','18tc5','19wb4','18uc9','19k9a','19ta7',  # 강서 방화
+            'eN41','eMb6','eYf8','ez9f',                       # 동대문
+            '14k74','13E5c','eNYxL',                            # 화곡/강동
+        ]
+        conn = get_conn()
+        cur = conn.cursor()
+        hg_count = 0
+        
+        for apt_hash in CORE_HASHES:
+            info = get_apt_simple(apt_hash)
+            if not info:
+                continue
+            apt_name = info.get('name', '')
+            
+            # 단지 정보 저장
+            cur.execute('''INSERT OR IGNORE INTO hogang_apts
+                (apt_hash, apt_name, address, road_address, region_code, lat, lng, household, trade_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (apt_hash, apt_name, info.get('address',''), info.get('roadAddress',''),
+                 info.get('regionCode',''), info.get('lat'), info.get('lng'), info.get('areaNo',0), 0))
+            
+            # 평형별 실거래가
+            rts = get_room_types(apt_hash)
+            for area_idx, rt in enumerate(rts[:3]):
+                area_no = area_idx + 1
+                rt_name = rt.get('zigbangRoomType', f'area{area_no}')
+                for tt in [0, 1]:  # 매매, 전세
+                    reports = get_monthly_reports(apt_hash, tt, area_no)
+                    if not reports:
+                        continue
+                    for month in reports:
+                        trade_date = (month.get('date','') or '')[:10].replace('T',' ')
+                        for trade in month.get('trades', []):
+                            price = trade.get('price') or month.get('averagePrice', 0)
+                            if not price: continue
+                            floor = trade.get('floor', 0)
+                            day = trade.get('day', 1)
+                            category = trade.get('category', tt + 1)
+                            is_lower = 1 if trade.get('isLowerFloor') else 0
+                            try:
+                                dt = f"{trade_date[:7]}-{day:02d}" if trade_date and day else trade_date
+                            except:
+                                dt = trade_date
+                            cur.execute('''INSERT OR IGNORE INTO hogang_trades
+                                (apt_hash, apt_name, area_no, room_type, trade_type,
+                                 trade_date, price, floor, category, is_lower_floor)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                (apt_hash, apt_name, area_no, rt_name, tt, dt,
+                                 int(price), floor, category, is_lower))
+                            if cur.rowcount > 0:
+                                hg_count += 1
+            conn.commit()
+        conn.close()
+        external_msgs.append(f"호갱 {hg_count}건")
+        print(f"  ✅ 호갱노노 {hg_count}건 저장")
+    except Exception as e:
+        print(f"  ⚠️ 호갱노노 수집 실패: {e}")
+        external_msgs.append("호갱 ⚠️")
+    
     # Step 2: 분석
-    print("\n[2/3] 분석 실행 중...")
+    print("\n[2/5] 분석 실행 중...")
     ranking, scores = run_analysis()
     
-    # Step 3: 위키 저장
-    print("\n[3/3] 위키 저장 중...")
+    # Step 3: KB 브리핑 데이터
+    print("\n[3/5] KB 시장 데이터 수집...")
+    kb_brief = ""
+    try:
+        from collectors.kb_price import get_jeonse_rate, get_market_trend
+        df_rate = get_jeonse_rate()
+        df_trend = get_market_trend()
+        if df_rate is not None:
+            for code, name in [('1100000000','서울'),('1B0000','강남11'),('1A0000','강북14')]:
+                rd = df_rate[df_rate['지역코드'].astype(str) == code]
+                if not rd.empty:
+                    last = rd.iloc[-1]
+                    kb_brief += f"- KB 전세가율({name}): {last['전세가격비율']:.1f}%\n"
+        if df_trend is not None:
+            rd = df_trend[df_trend['지역코드'].astype(str) == '1100000000']
+            if not rd.empty:
+                last = rd.iloc[-1]
+                kb_brief += f"- KB 매수우위지수(서울): {last['매수우위지수']:.1f}\n"
+    except Exception as e:
+        kb_brief = f"- KB 데이터 로딩 실패\n"
+    
+    # Step 4: 위키 저장
+    print("\n[4/5] 위키 저장 중...")
     # 간단 브리핑 텍스트 구성
     briefing = []
     briefing.append(f"**📊 매매 추천 TOP 5**")
@@ -253,14 +359,23 @@ def main():
         for r in data['reasons'][:2]:
             briefing.append(f"  └ {r}")
     
+    if kb_brief:
+        briefing.append(f"\n**🏢 KB 시장 데이터**")
+        briefing.append(kb_brief.strip())
+    
+    if external_msgs:
+        briefing.append(f"\n**📦 외부 수집**")
+        briefing.append(f"- {' / '.join(external_msgs)}")
+    
     briefing_text = '\n'.join(briefing)
     
     page_path = save_to_wiki(briefing_text, collect_msg)
     print(f"  ✅ 위키 저장 완료: {page_path}")
     
-    print(f"\n{'=' * 50}")
+    print(f"\\n{'=' * 50}")
     print(f"✅ 데일리 업데이트 완료!")
-    print(f"  - 수집: {collect_msg}")
+    print(f"  - MOLIT 수집: {collect_msg}")
+    print(f"  - KB: {kb_count}건 / 호갱노노: {hg_count}건")
     print(f"  - 위키: concepts/daily-briefing/{today}.md")
     print(f"  - 분석: {len(scores)}개 지역")
 

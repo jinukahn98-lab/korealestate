@@ -17,6 +17,20 @@ class ScorerV3:
         self.ref_date = row[0] if row and row[0] else "2025-05-31"
         self._cache_dates()
         self._init_collectors()
+        self._weight_multipliers = self._load_weights()
+
+    def _load_weights(self):
+        """ml_weights 테이블에서 최적화된 가중치 로드 (없으면 기본 1.0x)"""
+        try:
+            rows = self.conn.execute(
+                "SELECT factor_name, default_weight, optimized_weight FROM ml_weights"
+            ).fetchall()
+            return {
+                r[0]: round(r[2] / r[1], 2) if r[1] > 0 else 1.0
+                for r in rows
+            }
+        except Exception:
+            return {}
 
     def _cache_dates(self):
         rd = self.ref_date
@@ -85,6 +99,26 @@ class ScorerV3:
         f['뉴스감성'] = {'score': self._scale(raw13, 5), 'value': v13}
 
         total = s1 + s2 + s3 + s4 + s5 + s6 + self._scale(raw7, 10) + self._scale(raw8, 8) + self._scale(raw9, 8) + self._scale(raw10, 8) + self._scale(raw11, 10) + s12 + self._scale(raw13, 5)
+
+        # Apply ML-optimized weight multipliers if available
+        if self._weight_multipliers:
+            w = self._weight_multipliers
+            f['가격모멘텀']['score'] = round(f['가격모멘텀']['score'] * w.get('가격모멘텀', 1), 1)
+            f['중기추세']['score'] = round(f['중기추세']['score'] * w.get('중기추세', 1), 1)
+            f['전세가율']['score'] = round(f['전세가율']['score'] * w.get('전세가율', 1), 1)
+            f['거래안정성']['score'] = round(f['거래안정성']['score'] * w.get('거래안정성', 1), 1)
+            f['갭매력도']['score'] = round(f['갭매력도']['score'] * w.get('갭매력도', 1), 1)
+            f['리버전']['score'] = round(f['리버전']['score'] * w.get('리버전', 1), 1)
+            f['KB수급지수']['score'] = round(f['KB수급지수']['score'] * w.get('KB수급지수', 1), 1)
+            f['개발호재']['score'] = round(f['개발호재']['score'] * w.get('개발호재', 1), 1)
+            f['공급리스크']['score'] = round(f['공급리스크']['score'] * w.get('공급리스크', 1), 1)
+            f['학군']['score'] = round(f['학군']['score'] * w.get('학군', 1), 1)
+            f['거시환경']['score'] = round(f['거시환경']['score'] * w.get('거시환경', 1), 1)
+            f['지역계층']['score'] = round(f['지역계층']['score'] * w.get('지역계층', 1), 1)
+            f['뉴스감성']['score'] = round(f['뉴스감성']['score'] * w.get('뉴스감성', 1), 1)
+            total = sum(f[k]['score'] for k in f)
+            f['_weight_source'] = {'score': 0, 'value': 'ML 최적화'}
+
         return {
             'region': region,
             'total_score': round(total, 1),

@@ -132,55 +132,37 @@ class MLOptimizer:
         best_weights = self.DEFAULT_WEIGHTS.copy()
         multipliers = [0.6, 0.8, 1.0, 1.2, 1.4]
 
-        # For efficiency, limit search space: try varying each of the 12 factors
-        # But 5^12 is too large. Instead use a smarter approach:
-        # Group factors into 3 categories and vary multipliers per category
-        # Category 1: Price momentum factors (index 0-1)
-        # Category 2: Market condition factors (index 2-6)
-        # Category 3: External/structural factors (index 7-11)
+        # Phase 1: Per-factor grid search (each factor optimized independently)
+        # 5^12 is too large, so we use iterative refinement: 3 rounds
+        best_weights = self.DEFAULT_WEIGHTS.copy()
+        multipliers = [0.3, 0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0, 3.0]
 
-        for m1 in multipliers:
-            for m2 in multipliers:
-                for m3 in multipliers:
-                    weights = self.DEFAULT_WEIGHTS.copy()
-                    # Price momentum
-                    weights[0] = self.DEFAULT_WEIGHTS[0] * m1
-                    weights[1] = self.DEFAULT_WEIGHTS[1] * m1
-                    # Market condition
-                    weights[2] = self.DEFAULT_WEIGHTS[2] * m2
-                    weights[3] = self.DEFAULT_WEIGHTS[3] * m2
-                    weights[4] = self.DEFAULT_WEIGHTS[4] * m2
-                    weights[5] = self.DEFAULT_WEIGHTS[5] * m2
-                    weights[6] = self.DEFAULT_WEIGHTS[6] * m2
-                    # External/structural
-                    weights[7] = self.DEFAULT_WEIGHTS[7] * m3
-                    weights[8] = self.DEFAULT_WEIGHTS[8] * m3
-                    weights[9] = self.DEFAULT_WEIGHTS[9] * m3
-                    weights[10] = self.DEFAULT_WEIGHTS[10] * m3
-                    weights[11] = self.DEFAULT_WEIGHTS[11] * m3
-
-                    # Calculate predicted scores
-                    predicted = np.dot(factor_matrix, weights)
-
-                    # Calculate correlation with actual returns
-                    if np.std(predicted) > 0 and np.std(actual_returns) > 0:
-                        corr = np.corrcoef(predicted, actual_returns)[0, 1]
-                        if abs(corr) > abs(best_corr):
-                            best_corr = corr
-                            best_weights = weights
-
-        # Also try per-factor optimization if enough data
-        if len(self.training_data) >= 50:
-            for idx in range(len(self.DEFAULT_WEIGHTS)):
-                for m in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]:
+        for _ in range(3):  # 3 rounds of iterative refinement
+            for idx in range(len(best_weights)):
+                for m in multipliers:
                     weights = best_weights.copy()
                     weights[idx] = self.DEFAULT_WEIGHTS[idx] * m
                     predicted = np.dot(factor_matrix, weights)
                     if np.std(predicted) > 0 and np.std(actual_returns) > 0:
                         corr = np.corrcoef(predicted, actual_returns)[0, 1]
-                        if abs(corr) > abs(best_corr):
+                        if corr > best_corr:
                             best_corr = corr
-                            best_weights = weights
+                            best_weights = weights.copy()
+
+        # Phase 2: Refine top-performing factors with finer granularity
+        refined_multipliers = [x / 10 for x in range(2, 31, 1)]  # 0.2 to 3.0 step 0.1
+        top_indices = np.argsort(best_weights)[-3:]  # top 3 factors
+        for idx in top_indices:
+            base = self.DEFAULT_WEIGHTS[idx]
+            for m in refined_multipliers:
+                weights = best_weights.copy()
+                weights[idx] = base * m
+                predicted = np.dot(factor_matrix, weights)
+                if np.std(predicted) > 0 and np.std(actual_returns) > 0:
+                    corr = np.corrcoef(predicted, actual_returns)[0, 1]
+                    if corr > best_corr:
+                        best_corr = corr
+                        best_weights = weights.copy()
 
         self.best_weights = best_weights.round(1)
         self.best_corr = round(best_corr, 4)

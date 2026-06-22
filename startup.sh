@@ -46,18 +46,51 @@ except Exception as e:
 ")
 
 if [ "$TABLES_EXIST" = "no" ]; then
-    echo "=== Seeding external_data tables ==="
+    echo "=== Seeding external_data tables === ..."
     python3 -c "
-import sys
-sys.path.insert(0, '.')
+import sys; sys.path.insert(0, '.')
 from strategy.autopilot import Autopilot
 ap = Autopilot()
 ap.run_full_pipeline()
 ap.close()
-"
+" 2>&1 | tail -3
     echo "=== Seeding complete ==="
 else
-    echo "=== External data tables already exist, skipping seed ==="
+    echo "=== External data tables already exist ==="
+fi
+
+# Step 3: Run ML weight optimizer if not already done
+ML_DONE=$(python3 -c "
+import sqlite3, os
+if os.path.exists('${DB_FILE}'):
+    try:
+        conn = sqlite3.connect('${DB_FILE}')
+        cur = conn.execute(\"SELECT COUNT(*) FROM ml_weights\")
+        cnt = cur.fetchone()[0]
+        conn.close()
+        print('yes' if cnt > 0 else 'no')
+    except:
+        print('no')
+else:
+    print('no')
+")
+
+if [ "$ML_DONE" = "no" ]; then
+    echo "=== Running ML weight optimizer ... ==="
+    python3 -c "
+import sys; sys.path.insert(0, '.')
+from strategy.ml_optimizer import MLOptimizer
+import warnings; warnings.filterwarnings('ignore')
+o = MLOptimizer()
+data = o.collect_training_data()
+result = o.optimize_weights()
+o.apply_weights()
+print(f'ML 최적화 완료: 상관계수 {result[\"correlation\"]}')
+o.close()
+" 2>&1 | tail -1
+    echo "=== ML optimization complete ==="
+else
+    echo "=== ML weights already exist ==="
 fi
 
 echo "=== Starting Streamlit ==="
