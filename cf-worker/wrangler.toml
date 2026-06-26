@@ -1,0 +1,16 @@
+name = "kr-realestate"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kr-realestate"
+# Local-dev placeholder. Replace with the real id from `npx wrangler d1 create kr-realestate` before deploying remotely.
+database_id = "da263c69-3a8d-4b8f-ae4e-9b63a75650c4"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[observability]
+enabled = true
