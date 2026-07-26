@@ -1,11 +1,23 @@
 {
-  "exported_at": "2026-07-23T07:00:22.162519",
+  "exported_at": "2026-07-26T10:02:29.462417",
   "pages": {
     "current-policy": {
       "label": "정책 현황",
-      "size": 3417,
-      "sections": 6,
-      "updated": "2026-06-21"
+      "size": 1093,
+      "sections": 3,
+      "updated": "2026-07-26"
+    },
+    "market-trends": {
+      "label": "시장 동향",
+      "size": 1367,
+      "sections": 3,
+      "updated": "2026-07-26"
+    },
+    "development-projects": {
+      "label": "개발 호재",
+      "size": 994,
+      "sections": 4,
+      "updated": "2026-07-26"
     }
   }
 }
