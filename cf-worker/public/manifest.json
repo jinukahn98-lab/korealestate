@@ -1,0 +1,10 @@
+{
+    "name": "한국 부동산 분석",
+    "short_name": "부동산",
+    "description": "78개 지역 실시간 스코어링 + 청약 + 개발호재",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#1e3a5f",
+    "theme_color": "#1e40af",
+    "icons": []
+}

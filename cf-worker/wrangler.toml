@@ -14,3 +14,23 @@ binding = "ASSETS"
 
 [observability]
 enabled = true
+
+# Pulls manual-override CSVs from the Drive overrides folder into
+# manual_overrides (see src/lib/drive-sync.ts). The scorer/collector
+# pipelines are unaffected — overrides layer on top at read time.
+[triggers]
+crons = ["*/15 * * * *"]
+
+[vars]
+# Folder ID of the Drive folder holding override CSVs (share it with the
+# service account's client_email as Viewer). Not sensitive — safe as a plain var.
+GOOGLE_DRIVE_FOLDER_ID = "1XxEYEmdgxmofQuv3ZGHNdAihu-utBCXk"
+
+# Folder ID of the Drive folder holding per-table pipeline data dumps
+# (cf-worker/scripts/export_to_d1.py --split output, uploaded via rclone).
+# This is the "original data accumulates in Drive" path — see src/lib/drive-sync.ts.
+GOOGLE_DRIVE_DATA_FOLDER_ID = "1Jqxm1N57FhjizdZ2MgryhPaSDeDkoK7A"
+
+# GOOGLE_SERVICE_ACCOUNT_KEY (the full downloaded service-account JSON key,
+# as a single-line JSON string) is a secret — set remotely via:
+#   wrangler secret put GOOGLE_SERVICE_ACCOUNT_KEY

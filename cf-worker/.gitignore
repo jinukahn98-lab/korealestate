@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+seed.sql
+d1_sync/*.sql
+
+# The repository-level *.sql rule is intentionally overridden for migrations.
+!migrations/
+!migrations/*.sql
