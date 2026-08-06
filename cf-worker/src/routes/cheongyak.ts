@@ -5,8 +5,15 @@ const app = new Hono<{ Bindings: { DB: D1Database } }>();
 // GET /api/cheongyak — list public housing lotteries, paginated, with score join
 // Query params: limit (default 50, max 200), offset (default 0)
 app.get('/', async (c) => {
-  const limit = Math.min(Number(c.req.query('limit') ?? 50), 200);
-  const offset = Math.max(Number(c.req.query('offset') ?? 0), 0);
+  const limitRaw = c.req.query('limit');
+  const offsetRaw = c.req.query('offset');
+  const limit = limitRaw === undefined ? 50 : Number(limitRaw);
+  const offset = offsetRaw === undefined ? 0 : Number(offsetRaw);
+  if (!Number.isInteger(limit) || !Number.isInteger(offset)) {
+    return c.json({ error: 'invalid `limit`/`offset`: must be integers' }, 400);
+  }
+  const clampedLimit = Math.min(Math.max(limit, 0), 200);
+  const clampedOffset = Math.max(offset, 0);
 
   const { results } = await c.env.DB.prepare(
     `SELECT c.id, c.region, c.pblanc_name, c.total_supply, c.total_competition,
@@ -17,7 +24,7 @@ app.get('/', async (c) => {
      ORDER BY c.pblanc_start DESC
      LIMIT ? OFFSET ?`
   )
-    .bind(limit, offset)
+    .bind(clampedLimit, clampedOffset)
     .all();
 
   return c.json({ count: results.length, limit, offset, results });

@@ -52,6 +52,64 @@
   const fmtWon = (n) => (isFinite(Number(n)) ? fmtNum(Math.round(Number(n) / 10000)) + '만' : '—');
   const fmtDate = (s) => (s ? String(s).slice(0, 10) : '—');
 
+  /* ---------- API envelope + state helpers ---------- */
+  // Always unwrap `{ count, results }` envelopes. Never returns a non-array,
+  // so callers can safely .map()/.forEach() the result — even if the API
+  // misbehaves (missing `results`, `{ error: ... }` with HTTP 200, etc.).
+  const unwrapResults = (data) => {
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.results)) return data.results;
+    if (data && Array.isArray(data.data)) return data.data;
+    return [];
+  };
+
+  const EMPTY_MSG = '데이터가 없습니다';
+  const ERROR_MSG = '불러오지 못했습니다. 잠시 후 다시 시도해주세요';
+  const emptyStateHTML = (msg = EMPTY_MSG, extraCls = '') =>
+    `<div class="placeholder text-sm p-10 text-center ${extraCls}">${escapeHtml(msg)}</div>`;
+  const errorStateHTML = (detail, extraCls = '') =>
+    `<div class="state-error ${extraCls}">
+       <div class="font-medium">${ERROR_MSG}</div>
+       ${detail ? `<div class="text-xs mt-1 opacity-75">${escapeHtml(detail)}</div>` : ''}
+     </div>`;
+
+  /* ---------- Data freshness (last updated + 14-day staleness warning) ---------- */
+  const FRESHNESS_KEYS = ['scored_at', 'indexed_at', 'updated_at', 'created_at', 'timestamp'];
+  let latestDataTs = null; // epoch ms of the newest data timestamp seen
+  function trackFreshness(src) {
+    if (src == null) return;
+    const scan = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const k of FRESHNESS_KEYS) {
+        if (obj[k] == null) continue;
+        const t = Date.parse(String(obj[k]));
+        if (isFinite(t) && (latestDataTs == null || t > latestDataTs)) latestDataTs = t;
+      }
+    };
+    if (Array.isArray(src)) src.forEach(scan); else scan(src);
+  }
+  function renderFreshness() {
+    const node = $('[data-last-updated]');
+    const warn = $('#freshness-warn');
+    if (latestDataTs == null) {
+      if (node) node.textContent = '—';
+      if (warn) warn.classList.add('hidden');
+      return;
+    }
+    const ageDays = (Date.now() - latestDataTs) / 86400000;
+    if (node) node.textContent = '업데이트 ' + fmtDate(new Date(latestDataTs).toISOString());
+    if (warn) {
+      if (ageDays > 14) {
+        warn.textContent = `⚠️ 데이터 오래됨 (${Math.floor(ageDays)}일 전)`;
+        warn.classList.remove('hidden');
+        warn.classList.add('inline-flex');
+      } else {
+        warn.classList.add('hidden');
+        warn.classList.remove('inline-flex');
+      }
+    }
+  }
+
   /* ---------- API helper ---------- */
   async function fetchJSON(url, opts = {}) {
     const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...opts });
@@ -95,8 +153,8 @@
         fetchJSON(`${API}/cheongyak`)
       ]);
 
-      const regs = regions.status === 'fulfilled' ? (regions.value?.results || regions.value || []) : [];
-      const cyk  = cheongyak.status === 'fulfilled' ? (cheongyak.value?.results || cheongyak.value || []) : [];
+      const regs = regions.status === 'fulfilled' ? unwrapResults(regions.value) : [];
+      const cyk  = cheongyak.status === 'fulfilled' ? unwrapResults(cheongyak.value) : [];
 
       const scores = regs.map((r) => Number(r.total_score)).filter(isFinite);
       const top = scores.length ? regs.reduce((a, b) =>
@@ -111,8 +169,9 @@
       setKpi('cheongyak', fmtNum(cykSupply));
       $('[data-kpi-cheongyak-count]').textContent = `${fmtNum(cyk.length)}개 공고`;
 
-      const updated = top?.scored_at || cyk[0]?.pblanc_end || new Date().toISOString();
-      $('[data-last-updated]').textContent = '업데이트 ' + fmtDate(updated);
+      trackFreshness(regs);      // scored_at
+      trackFreshness(cyk);
+      renderFreshness();
     } catch (e) {
       console.warn('loadKPIs failed:', e);
     }
@@ -130,16 +189,18 @@
     list.innerHTML = '<div class="placeholder text-sm text-slate-400 p-4 text-center">불러오는 중…</div>';
     try {
       const data = await fetchJSON(`${API}/regions`);
-      state.regions = (data?.results || data || []).slice().sort(
+      state.regions = unwrapResults(data).slice().sort(
         (a, b) => Number(b.total_score) - Number(a.total_score));
       $('#ranking-count').textContent = fmtNum(state.regions.length);
+      trackFreshness(state.regions);   // scored_at
+      renderFreshness();
       renderRankingList();
       // Auto-select top region
       if (state.regions.length && !state.selectedRegion) {
         loadRegionDetail(state.regions[0].region);
       }
     } catch (e) {
-      list.innerHTML = `<div class="state-error">지역 목록 로드 실패: ${escapeHtml(e.message)}</div>`;
+      list.innerHTML = errorStateHTML(`지역 목록: ${e.message}`);
     }
   }
 
@@ -147,7 +208,7 @@
     const list = $('#ranking-list');
     list.innerHTML = '';
     if (!state.regions.length) {
-      list.innerHTML = '<div class="placeholder text-sm p-6 text-center">표시할 지역이 없습니다.</div>';
+      list.innerHTML = emptyStateHTML('표시할 지역 데이터가 없습니다', 'p-6');
       return;
     }
     state.regions.forEach((r, i) => {
@@ -188,14 +249,23 @@
       const r = await fetchJSON(`${API}/regions/${encodeURIComponent(region)}`);
       renderRegionDetail(r);
     } catch (e) {
-      host.innerHTML = `<div class="state-error">상세 로드 실패: ${escapeHtml(e.message)}</div>`;
+      host.innerHTML = errorStateHTML(`지역 상세: ${e.message}`);
     }
   }
 
   function renderRegionDetail(r) {
     const host = $('#region-detail');
-    const grade = gradeOf(r.grade);
-    const factors = parseFactors(r.factors);
+    if (!r || typeof r !== 'object') {
+      host.innerHTML = emptyStateHTML('지역 상세 데이터가 없습니다');
+      return;
+    }
+    // The Worker returns `{ score, overrides, monthly_stats, cheongyak, development }`;
+    // older shapes put the score fields at the top level — handle both envelopes.
+    const s = (r.score && typeof r.score === 'object') ? r.score : r;
+    const grade = gradeOf(s.grade);
+    const factors = parseFactors(s.factors);
+    const totalScore = Number(s.total_score);
+    const scoreStr = isFinite(totalScore) ? totalScore.toFixed(1) : '—';
 
     const factorBars = factors.length
       ? factors.map((f) => factorBarHTML(f)).join('')
@@ -204,14 +274,14 @@
     host.innerHTML = `
       <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
         <div>
-          <h2 class="text-lg font-bold text-slate-800">${escapeHtml(r.region)}</h2>
+          <h2 class="text-lg font-bold text-slate-800">${escapeHtml(s.region || r.region || '—')}</h2>
           <p class="text-xs text-slate-500">
-            ${escapeHtml(r.version || 'v?')} · scored ${fmtDate(r.scored_at)}
+            ${escapeHtml(s.version || 'v?')} · scored ${fmtDate(s.scored_at)}
           </p>
         </div>
         <div class="flex items-center gap-2">
-          <div class="text-3xl font-extrabold text-slate-800">${Number(r.total_score).toFixed(1)}</div>
-          <span class="score-badge ${grade.cls} text-sm">${grade.icon} ${escapeHtml(r.grade || '—')}</span>
+          <div class="text-3xl font-extrabold text-slate-800">${scoreStr}</div>
+          <span class="score-badge ${grade.cls} text-sm">${grade.icon} ${escapeHtml(s.grade || '—')}</span>
         </div>
       </div>
 
@@ -239,6 +309,10 @@
 
     // Price chart
     renderPriceChart(r.monthly || r.monthly_stats || []);
+
+    // Freshness: score row carries scored_at
+    trackFreshness(s);
+    renderFreshness();
   }
 
   function factorBarHTML(f) {
@@ -312,18 +386,21 @@
     host.innerHTML = '<div class="placeholder text-sm text-slate-400 p-10 text-center col-span-full">불러오는 중…</div>';
     try {
       const data = await fetchJSON(`${API}/cheongyak`);
-      state.cheongyak = data?.results || data || [];
+      state.cheongyak = unwrapResults(data);
+      trackFreshness(state.cheongyak);
+      renderFreshness();
       renderCheongyak(state.cheongyak);
     } catch (e) {
-      host.innerHTML = `<div class="state-error col-span-full">청약 로드 실패: ${escapeHtml(e.message)}</div>`;
+      host.innerHTML = errorStateHTML(`청약: ${e.message}`, 'col-span-full');
     }
   }
 
   function renderCheongyak(items) {
     const host = $('#cheongyak-list');
     host.innerHTML = '';
+    if (!Array.isArray(items)) items = [];
     if (!items.length) {
-      host.innerHTML = '<div class="placeholder text-sm p-10 text-center col-span-full">조건에 맞는 공고가 없습니다.</div>';
+      host.innerHTML = emptyStateHTML('조건에 맞는 청약 데이터가 없습니다', 'col-span-full');
       return;
     }
     items.forEach((c) => {
@@ -371,21 +448,24 @@
     host.innerHTML = '<div class="placeholder text-sm text-slate-400 p-10 text-center col-span-full">불러오는 중…</div>';
     try {
       const data = await fetchJSON(`${API}/development`);
-      const items = (data?.results || data || []).slice().sort(
+      const items = unwrapResults(data).slice().sort(
         (a, b) => Number(b.impact_score) - Number(a.impact_score));
       host.dataset.loaded = '1';
       $('#dev-count').textContent = fmtNum(items.length);
+      trackFreshness(items);
+      renderFreshness();
       renderDevelopment(items);
     } catch (e) {
-      host.innerHTML = `<div class="state-error col-span-full">개발호재 로드 실패: ${escapeHtml(e.message)}</div>`;
+      host.innerHTML = errorStateHTML(`개발호재: ${e.message}`, 'col-span-full');
     }
   }
 
   function renderDevelopment(items) {
     const host = $('#development-list');
     host.innerHTML = '';
+    if (!Array.isArray(items)) items = [];
     if (!items.length) {
-      host.innerHTML = '<div class="placeholder text-sm p-10 text-center col-span-full">등록된 개발호재가 없습니다.</div>';
+      host.innerHTML = emptyStateHTML('등록된 개발호재 데이터가 없습니다', 'col-span-full');
       return;
     }
     items.forEach((d) => {
@@ -439,23 +519,33 @@
         fetchJSON(`${API}/evaluation/weights`),
         fetchJSON(`${API}/evaluation`)
       ]);
-      const weights = w.status === 'fulfilled' ? (w.value?.results || w.value || []) : [];
-      const history = h.status === 'fulfilled' ? (h.value?.results || h.value || []) : [];
+      const weights = w.status === 'fulfilled' ? unwrapResults(w.value) : [];
+      const history = h.status === 'fulfilled' ? unwrapResults(h.value) : [];
       _evalLoaded = true;
-      renderWeightsChart(weights);
+      trackFreshness(weights);   // updated_at
+      trackFreshness(history);   // created_at
+      renderFreshness();
+      renderWeightsChart(weights, w.status === 'rejected' ? w.reason.message : null);
       renderEvalHistory(history, h.status === 'rejected' ? h.reason.message : null);
     } catch (e) {
-      hist.innerHTML = `<div class="state-error">평가 로드 실패: ${escapeHtml(e.message)}</div>`;
+      hist.innerHTML = errorStateHTML(`평가: ${e.message}`);
     }
   }
 
-  function renderWeightsChart(weights) {
+  function renderWeightsChart(weights, errMsg) {
     const canvas = $('#weights-chart');
     if (!canvas) return;
     if (state.charts.weights) { state.charts.weights.destroy(); state.charts.weights = null; }
+    // remove previously injected notes so re-renders don't duplicate them
+    $$('.chart-note', canvas.parentElement).forEach((n) => n.remove());
+    if (errMsg && !Array.isArray(weights)) {
+      canvas.parentElement.insertAdjacentHTML('beforeend',
+        errorStateHTML(`가중치: ${errMsg}`, 'chart-note mt-2'));
+      return;
+    }
     if (!weights.length) {
       canvas.parentElement.insertAdjacentHTML('beforeend',
-        '<p class="text-xs text-slate-400 mt-2">가중치 데이터 없음</p>');
+        '<p class="chart-note text-xs text-slate-400 mt-2">가중치 데이터가 없습니다</p>');
       return;
     }
     const labels = weights.map((x) => x.factor_name);
@@ -490,12 +580,13 @@
   function renderEvalHistory(history, errMsg) {
     const host = $('#evaluation-history');
     host.innerHTML = '';
+    if (!Array.isArray(history)) history = [];
     if (errMsg && !history.length) {
-      host.innerHTML = `<div class="state-error">히스토리 로드 실패: ${escapeHtml(errMsg)}</div>`;
+      host.innerHTML = errorStateHTML(`히스토리: ${errMsg}`);
       return;
     }
     if (!history.length) {
-      host.innerHTML = '<div class="placeholder text-sm p-6 text-center">평가 히스토리 없음</div>';
+      host.innerHTML = emptyStateHTML('평가 히스토리 데이터가 없습니다', 'p-6');
       return;
     }
     const sorted = history.slice().sort((a, b) =>
@@ -523,20 +614,31 @@
      ============================================================ */
   async function searchWiki(q) {
     const host = $('#wiki-results');
+    const query = String(q || '').trim();
+    // Client-side guard: never fire a request for an empty query.
+    if (!query) {
+      host.innerHTML = emptyStateHTML('검색어를 입력해 주세요');
+      $('#wiki-query').focus();
+      return;
+    }
     host.innerHTML = '<div class="placeholder text-sm text-slate-400 p-10 text-center">검색 중…</div>';
     try {
-      const data = await fetchJSON(`${API}/search?q=${encodeURIComponent(q)}`);
-      renderWikiResults(data?.results || data || [], q);
+      const data = await fetchJSON(`${API}/search?q=${encodeURIComponent(query)}`);
+      const results = unwrapResults(data);
+      trackFreshness(results);   // indexed_at
+      renderFreshness();
+      renderWikiResults(results, query);
     } catch (e) {
-      host.innerHTML = `<div class="state-error">위키 검색 실패: ${escapeHtml(e.message)}</div>`;
+      host.innerHTML = errorStateHTML(`위키 검색: ${e.message}`);
     }
   }
 
   function renderWikiResults(results, q) {
     const host = $('#wiki-results');
     host.innerHTML = '';
+    if (!Array.isArray(results)) results = [];
     if (!results.length) {
-      host.innerHTML = `<div class="placeholder text-sm p-10 text-center">"${escapeHtml(q)}"에 대한 결과가 없습니다.</div>`;
+      host.innerHTML = emptyStateHTML(`"${escapeHtml(q)}"에 대한 결과가 없습니다`);
       return;
     }
     const head = el('div', { class: 'text-xs text-slate-500 mb-1' },
@@ -598,11 +700,10 @@
       if (e.key === 'Enter') { e.preventDefault(); searchCheongyak(); }
     });
 
-    // Wiki form
+    // Wiki form — client-side guard: an empty query never fires a request
     $('#wiki-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const q = $('#wiki-query').value.trim();
-      if (q) searchWiki(q);
+      searchWiki($('#wiki-query').value);   // searchWiki() itself guards empty queries
     });
   }
 
@@ -614,7 +715,8 @@
   window.App = {
     fetchJSON, loadKPIs, loadRanking, loadRegionDetail,
     loadCheongyak, searchCheongyak, loadDevelopment,
-    loadEvaluation, searchWiki, showTab, state
+    loadEvaluation, searchWiki, showTab, state,
+    unwrapResults, trackFreshness, renderFreshness
   };
 
   // ---- Boot ----

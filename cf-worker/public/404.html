@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>404 · 페이지를 찾을 수 없습니다 · 한국 부동산 분석 시스템</title>
+  <meta name="description" content="요청하신 페이지를 찾을 수 없습니다." />
+  <meta name="theme-color" content="#1e40af" />
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe',
+              300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6',
+              600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a'
+            }
+          },
+          fontFamily: {
+            sans: ['Pretendard', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Pretendard font -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+  <!-- ============== HEADER ============== -->
+  <header class="bg-gradient-to-r from-brand-700 to-brand-900 text-white shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl sm:text-4xl">🏠</span>
+        <div>
+          <h1 class="text-xl sm:text-2xl font-bold tracking-tight">한국 부동산 분석 시스템</h1>
+          <p class="text-brand-100 text-xs sm:text-sm">RAG+RSI v5.0 · 지역 점수 · 청약 · 개발호재 · 평가 · 위키</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============== 404 CONTENT ============== -->
+  <main class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 flex items-center justify-center">
+    <div class="text-center max-w-md w-full bg-white rounded-2xl shadow-sm border border-slate-200 px-8 py-12">
+      <div class="text-6xl mb-4">🧭</div>
+      <p class="text-xs font-bold tracking-widest text-brand-600 mb-2">404 · NOT FOUND</p>
+      <h2 class="text-2xl font-extrabold text-slate-800 mb-2">페이지를 찾을 수 없습니다</h2>
+      <p class="text-sm text-slate-500 mb-6">
+        요청하신 페이지가 존재하지 않거나, 이동되었거나, 삭제되었을 수 있습니다.<br />
+        <span id="notfound-path" class="inline-block mt-2 px-2 py-1 rounded bg-slate-100 text-slate-400 text-xs font-mono break-all max-w-full"></span>
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-2">
+        <a href="/"
+           class="px-5 py-2.5 text-sm font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition w-full sm:w-auto">
+          ← 홈으로 돌아가기
+        </a>
+        <button onclick="history.length > 1 ? history.back() : location.href='/';"
+                class="px-5 py-2.5 text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition w-full sm:w-auto">
+          이전 페이지
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============== FOOTER ============== -->
+  <footer class="border-t border-slate-200 bg-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <span>🏠 한국 부동산 분석 시스템 · <span class="text-slate-400">RAG+RSI v5.0</span></span>
+      <span class="text-slate-400">Powered by Cloudflare Workers · D1 · FTS5</span>
+    </div>
+  </footer>
+
+  <script>
+    // Show the path that produced the 404 (harmless enhancement; no deps)
+    try {
+      var p = document.getElementById('notfound-path');
+      if (p) p.textContent = location.pathname || '/';
+    } catch (_) {}
+  </script>
+</body>
+</html>

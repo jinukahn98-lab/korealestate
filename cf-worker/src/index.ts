@@ -20,6 +20,13 @@ const app = new Hono<{ Bindings: Env }>();
 // CORS for all routes
 app.use('*', cors());
 
+// Global error handler — any uncaught exception becomes a JSON 500,
+// never an HTML error page.
+app.onError((error, c) => {
+  console.error(error);
+  return c.json({ error: 'internal_error' }, 500);
+});
+
 // API routes
 app.route('/api/regions', regions);
 app.route('/api/cheongyak', cheongyak);
