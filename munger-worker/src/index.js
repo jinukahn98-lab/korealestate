@@ -4,12 +4,18 @@ export default {
     const type = response.headers.get('content-type') || '';
     if (!type.includes('text/html')) return response;
 
-    return new HTMLRewriter()
-      .on('body', {
-        element(element) {
-          element.append('<script src="/deep-dive.js?v=20260827-2" defer></script>', { html: true });
-        },
-      })
-      .transform(response);
+    const html = await response.text();
+    const injected = html.includes('/deep-dive.js')
+      ? html
+      : html.replace('</body>', '<script src="/deep-dive.js?v=20260827-3" defer></script></body>');
+
+    const headers = new Headers(response.headers);
+    headers.delete('content-length');
+    headers.set('cache-control', 'no-cache');
+    return new Response(injected, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   },
 };
