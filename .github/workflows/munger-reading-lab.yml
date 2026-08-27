@@ -42,16 +42,15 @@ jobs:
 
       - name: Verify deployed app
         run: |
-          python - <<'PY'
-          import urllib.request
-          url = open('DEPLOYED_URL.txt', encoding='utf-8').read().strip()
-          with urllib.request.urlopen(url, timeout=30) as r:
-              body = r.read().decode('utf-8', 'ignore')
-              assert r.status == 200, r.status
-              assert 'Munger Reading Lab' in body
-              assert '수기 메모' in body
-          print(url)
-          PY
+          URL=$(cat DEPLOYED_URL.txt)
+          CODE=$(curl -L -A 'Mozilla/5.0' -sS -o deployed.html -w '%{http_code}' "$URL")
+          echo "HTTP $CODE $URL"
+          if [ "$CODE" != "200" ]; then
+            head -c 2000 deployed.html || true
+            exit 1
+          fi
+          grep -q 'Munger Reading Lab' deployed.html
+          grep -q '수기 메모' deployed.html
 
       - name: Record verified URL
         run: |
