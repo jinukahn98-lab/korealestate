@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "munger-reading-lab",
+  "main": "./src/index.js",
+  "compatibility_date": "2026-08-27",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS"
+  }
+}
