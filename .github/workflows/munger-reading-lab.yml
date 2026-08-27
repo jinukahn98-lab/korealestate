@@ -45,13 +45,15 @@ jobs:
           URL=$(cat DEPLOYED_URL.txt)
           CODE=$(curl -L -A 'Mozilla/5.0' -sS -o deployed.html -w '%{http_code}' "$URL")
           echo "HTTP $CODE $URL"
-          if [ "$CODE" != "200" ]; then
-            head -c 2000 deployed.html || true
-            exit 1
-          fi
-          grep -q 'Deep Dive 정리집' deployed.html
+          test "$CODE" = "200"
+          grep -q '해설형 정리집' deployed.html
           grep -q '투자 원칙 체크리스트' deployed.html
-          grep -q '25개 경향' deployed.html
+          grep -q 'deep-dive.js' deployed.html
+          JSCODE=$(curl -L -A 'Mozilla/5.0' -sS -o deep-dive.js -w '%{http_code}' "$URL/deep-dive.js")
+          test "$JSCODE" = "200"
+          grep -q '핵심 강연 5개' deep-dive.js
+          grep -q 'CASE ATLAS' deep-dive.js
+          grep -q '맥도널 더글러스' deep-dive.js
 
       - name: Record verified URL
         run: |
