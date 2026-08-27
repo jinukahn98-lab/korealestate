@@ -49,9 +49,9 @@ jobs:
             head -c 2000 deployed.html || true
             exit 1
           fi
-          grep -q '가난한 찰리의 연감' deployed.html
-          grep -q '11개 강연' deployed.html
-          grep -q '내 전체 정리' deployed.html
+          grep -q '책 전체 정리집' deployed.html
+          grep -q '11개 강연 정리' deployed.html
+          grep -q '인간적 오판의 심리학' deployed.html
 
       - name: Record verified URL
         run: |
